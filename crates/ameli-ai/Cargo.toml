@@ -9,3 +9,5 @@ edition.workspace = true   # Inherits "2021" from root
 serde = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
+jsonschema = { workspace = true }
+serde_json = { workspace = true }
