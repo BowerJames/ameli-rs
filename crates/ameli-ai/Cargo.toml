@@ -1,0 +1,11 @@
+[package]
+name = "ameli-ai"
+version.workspace = true   # Inherits version "0.1.0" from root
+edition.workspace = true   # Inherits "2021" from root
+
+[dependencies]
+
+# External crates inherited from the root workspace
+serde = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
