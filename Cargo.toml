@@ -1,0 +1,22 @@
+[workspace]
+# Tells Cargo to look for all sub-directories under crates/
+members = [
+    "crates/*",
+]
+
+# Ensures feature flags are resolved independently per crate, preventing feature-leaking
+resolver = "2"
+
+[workspace.package]
+# Anything defined here can be inherited by sub-crates using `version.workspace = true`
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name <you@example.com>"]
+license = "MIT"
+
+[workspace.dependencies]
+# Define shared external dependencies here. 
+# Sub-crates can pull them in using `serde = { workspace = true }` to keep versions perfectly in sync.
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1.0", features = ["full"] }
+anyhow = "1.0"

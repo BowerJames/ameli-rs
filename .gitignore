@@ -1,0 +1,22 @@
+# --- Rust/Cargo Artifacts ---
+# Contains all the compiled binaries, libraries, and intermediate build files
+/target/
+
+# --- IDEs and Tools ---
+# VS Code
+.vscode/
+
+# IntelliJ / Rust Rover / CLion
+.idea/
+
+# Local backup files from text editors
+*.rs.bk
+*.swp
+*~
+
+# --- OS-Specific Files ---
+.DS_Store
+Thumbs.db
+
+# References for other Repos
+reference/
