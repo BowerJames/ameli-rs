@@ -10,6 +10,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
+futures = { workspace = true }
 
 # Workspace crates
 ameli-ai = { path = "../ameli-ai" }
