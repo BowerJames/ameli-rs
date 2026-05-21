@@ -7,5 +7,12 @@ edition.workspace = true   # Inherits "2021" from root
 
 # External crates inherited from the root workspace
 serde = { workspace = true }
+serde_json = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
+
+# Workspace crates
+ameli-ai = { path = "../ameli-ai" }
+
+# Cancellation token (Rust equivalent of AbortSignal)
+tokio-util = { version = "0.7", features = ["rt"] }

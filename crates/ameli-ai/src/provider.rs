@@ -5,15 +5,26 @@
 //! registered by API protocol name (e.g., `"openai-responses"`, `"anthropic-messages"`)
 //! and looked up at request time via the model's [`Model::api`] field.
 //!
+//! # Registry
+//!
+//! [`ProviderRegistry`] holds registered [`StreamFn`] implementations keyed by
+//! API protocol name. It uses interior mutability so callers share a single
+//! instance by reference while still allowing registration at runtime.
+//!
+//! A global default ([`DEFAULT_REGISTRY`]) is provided for convenience, accessed
+//! via [`stream_simple_global`] and [`complete_simple_global`].
+//!
 //! # Entry points
 //!
-//! - [`stream_simple`] — stream an LLM response, looking up the provider by model API
-//! - [`complete_simple`] — await a full LLM response (convenience over `stream_simple`)
+//! - [`stream_simple`] — stream an LLM response using an explicit registry
+//! - [`stream_simple_global`] — stream using the global default registry
+//! - [`complete_simple`] — await a full LLM response (explicit registry)
+//! - [`complete_simple_global`] — await a full response (global registry)
 
 use crate::stream::AssistantMessageEventStream;
 use crate::types::{AssistantMessage, AssistantMessageEvent, Context, Model, StreamOptions};
 use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{LazyLock, RwLock};
 
 // ---------------------------------------------------------------------------
 // StreamFn trait
@@ -48,56 +59,92 @@ pub trait StreamFn: Send + Sync {
 }
 
 // ---------------------------------------------------------------------------
-// Provider registry
+// ProviderRegistry
 // ---------------------------------------------------------------------------
 
-static PROVIDER_REGISTRY: LazyLock<Mutex<HashMap<String, Box<dyn StreamFn>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
-/// Register a streaming provider for an API protocol.
+/// Registry of [`StreamFn`] implementations keyed by API protocol name.
 ///
-/// Overwrites any previously registered provider for the same API name.
-pub fn register_api_provider(api: impl Into<String>, provider: Box<dyn StreamFn>) {
-    let mut registry = PROVIDER_REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
-    registry.insert(api.into(), provider);
+/// Uses interior mutability (`RwLock`) so callers can share a single instance
+/// by reference while still registering providers at runtime. Concurrent reads
+/// (lookups during streaming) are not blocked by each other; only registration
+/// takes a write lock.
+///
+/// # Examples
+///
+/// ```
+/// use ameli_ai::provider::{ProviderRegistry, StreamFn};
+/// # use ameli_ai::types::{Model, Context, StreamOptions};
+/// # use ameli_ai::stream::AssistantMessageEventStream;
+///
+/// let registry = ProviderRegistry::new();
+/// // registry.register("anthropic-messages", Box::new(MyProvider));
+/// // ameli_ai::provider::stream_simple(&registry, &model, context, options);
+/// ```
+pub struct ProviderRegistry {
+    providers: RwLock<HashMap<String, Box<dyn StreamFn>>>,
 }
 
-/// Remove all registered providers.
-pub fn clear_api_providers() {
-    let mut registry = PROVIDER_REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
-    registry.clear();
+impl ProviderRegistry {
+    /// Create an empty registry.
+    pub fn new() -> Self {
+        Self {
+            providers: RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// Register a streaming provider for an API protocol.
+    ///
+    /// Overwrites any previously registered provider for the same API name.
+    pub fn register(&self, api: impl Into<String>, provider: Box<dyn StreamFn>) {
+        let mut providers = self.providers.write().unwrap_or_else(|e| e.into_inner());
+        providers.insert(api.into(), provider);
+    }
+
+    /// Remove all registered providers.
+    pub fn clear(&self) {
+        let mut providers = self.providers.write().unwrap_or_else(|e| e.into_inner());
+        providers.clear();
+    }
+
+    /// Look up the provider for an API protocol and dispatch a stream request.
+    ///
+    /// The read lock is held only long enough to call `provider.stream(...)`,
+    /// which returns immediately per the [`StreamFn`] contract.
+    fn stream_via_registry(
+        &self,
+        model: &Model,
+        context: Context,
+        options: StreamOptions,
+    ) -> Result<AssistantMessageEventStream, String> {
+        let providers = self.providers.read().unwrap_or_else(|e| e.into_inner());
+        match providers.get(&model.api) {
+            Some(provider) => Ok(provider.stream(model, context, options)),
+            None => Err(format!("no API provider registered for api: {}", model.api)),
+        }
+    }
 }
 
-/// Stream via the registered provider, holding the lock only for dispatch.
-///
-/// This is the internal path shared by [`stream_simple`] and other
-/// top-level helpers. The lock is held just long enough to call
-/// `provider.stream(...)`, which returns immediately per the StreamFn
-/// contract.
-fn stream_via_registry(
-    model: &Model,
-    context: Context,
-    options: StreamOptions,
-) -> Result<AssistantMessageEventStream, String> {
-    let registry = PROVIDER_REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
-    match registry.get(&model.api) {
-        Some(provider) => Ok(provider.stream(model, context, options)),
-        None => Err(format!("no API provider registered for api: {}", model.api)),
+impl Default for ProviderRegistry {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 // ---------------------------------------------------------------------------
-// Clone helper for Box<dyn StreamFn>
+// Global default registry
 // ---------------------------------------------------------------------------
 
-
+/// Global default registry for convenience.
+///
+/// Use [`stream_simple_global`] or [`complete_simple_global`] to stream via
+/// this registry without passing it explicitly.
+pub static DEFAULT_REGISTRY: LazyLock<ProviderRegistry> = LazyLock::new(ProviderRegistry::new);
 
 // ---------------------------------------------------------------------------
 // Top-level entry points
 // ---------------------------------------------------------------------------
 
-/// Stream an LLM response by looking up the registered provider for the
-/// model's API protocol.
+/// Stream an LLM response by looking up the provider in the given registry.
 ///
 /// # Errors
 ///
@@ -106,11 +153,12 @@ fn stream_via_registry(
 /// message. This follows the StreamFn contract: failures are encoded in the
 /// stream, never thrown.
 pub fn stream_simple(
+    registry: &ProviderRegistry,
     model: &Model,
     context: Context,
     options: StreamOptions,
 ) -> AssistantMessageEventStream {
-    match stream_via_registry(model, context, options) {
+    match registry.stream_via_registry(model, context, options) {
         Ok(stream) => stream,
         Err(error_message) => {
             let (producer, stream) = crate::stream::create_assistant_message_event_stream();
@@ -125,16 +173,41 @@ pub fn stream_simple(
     }
 }
 
+/// Stream an LLM response using the [`DEFAULT_REGISTRY`].
+///
+/// Convenience wrapper around [`stream_simple`] for callers that don't need
+/// an explicit registry.
+pub fn stream_simple_global(
+    model: &Model,
+    context: Context,
+    options: StreamOptions,
+) -> AssistantMessageEventStream {
+    stream_simple(&DEFAULT_REGISTRY, model, context, options)
+}
+
 /// Await a full LLM response by streaming and collecting the final message.
 ///
 /// Convenience wrapper around [`stream_simple`] for callers that don't need
 /// incremental streaming events (e.g., compaction summarization).
 pub async fn complete_simple(
+    registry: &ProviderRegistry,
     model: &Model,
     context: Context,
     options: StreamOptions,
 ) -> AssistantMessage {
-    stream_simple(model, context, options).result().await
+    stream_simple(registry, model, context, options).result().await
+}
+
+/// Await a full LLM response using the [`DEFAULT_REGISTRY`].
+///
+/// Convenience wrapper around [`complete_simple`] for callers that don't need
+/// an explicit registry.
+pub async fn complete_simple_global(
+    model: &Model,
+    context: Context,
+    options: StreamOptions,
+) -> AssistantMessage {
+    complete_simple(&DEFAULT_REGISTRY, model, context, options).await
 }
 
 // ---------------------------------------------------------------------------
@@ -228,19 +301,19 @@ mod tests {
     }
 
     #[test]
-    fn register_and_clear() {
-        clear_api_providers();
+    fn registry_register_and_clear() {
+        let registry = ProviderRegistry::new();
+        registry.register("test-api", Box::new(ImmediateProvider));
+        registry.clear();
         // Verify clearing works without panic
-        register_api_provider("test-api", Box::new(ImmediateProvider));
-        clear_api_providers();
     }
 
     #[tokio::test]
     async fn stream_simple_returns_error_for_unregistered_api() {
-        clear_api_providers();
+        let registry = ProviderRegistry::new();
         let model = test_model();
         let context = Context::default();
-        let result = stream_simple(&model, context, StreamOptions::default())
+        let result = stream_simple(&registry, &model, context, StreamOptions::default())
             .result()
             .await;
 
@@ -250,32 +323,28 @@ mod tests {
 
     #[tokio::test]
     async fn stream_simple_delegates_to_registered_provider() {
-        clear_api_providers();
-        register_api_provider("test-api", Box::new(ImmediateProvider));
+        let registry = ProviderRegistry::new();
+        registry.register("test-api", Box::new(ImmediateProvider));
 
         let model = test_model();
         let context = Context::default();
-        let result = stream_simple(&model, context, StreamOptions::default())
+        let result = stream_simple(&registry, &model, context, StreamOptions::default())
             .result()
             .await;
 
         assert_eq!(result.stop_reason, StopReason::Stop);
         assert_eq!(result.content.len(), 1);
-
-        clear_api_providers();
     }
 
     #[tokio::test]
     async fn complete_simple_returns_final_message() {
-        clear_api_providers();
-        register_api_provider("test-api", Box::new(ImmediateProvider));
+        let registry = ProviderRegistry::new();
+        registry.register("test-api", Box::new(ImmediateProvider));
 
         let model = test_model();
         let context = Context::default();
-        let result = complete_simple(&model, context, StreamOptions::default()).await;
+        let result = complete_simple(&registry, &model, context, StreamOptions::default()).await;
 
         assert_eq!(result.stop_reason, StopReason::Stop);
-
-        clear_api_providers();
     }
 }
