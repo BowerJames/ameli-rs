@@ -63,6 +63,7 @@ fn default_model() -> Model {
         cost: Cost::default(),
         context_window: 0,
         max_tokens: 0,
+        compat: None,
     }
 }
 
@@ -1164,6 +1165,7 @@ mod tests {
             cost: Cost::default(),
             context_window: 128_000,
             max_tokens: 16_384,
+            compat: None,
         }
     }
 

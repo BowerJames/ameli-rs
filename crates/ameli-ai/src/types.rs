@@ -47,6 +47,18 @@ pub enum ModelThinkingLevel {
     XHigh,
 }
 
+impl From<ThinkingLevel> for ModelThinkingLevel {
+    fn from(level: ThinkingLevel) -> Self {
+        match level {
+            ThinkingLevel::Minimal => ModelThinkingLevel::Minimal,
+            ThinkingLevel::Low => ModelThinkingLevel::Low,
+            ThinkingLevel::Medium => ModelThinkingLevel::Medium,
+            ThinkingLevel::High => ModelThinkingLevel::High,
+            ThinkingLevel::XHigh => ModelThinkingLevel::XHigh,
+        }
+    }
+}
+
 /// Prompt cache retention preference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CacheRetention {
@@ -199,6 +211,18 @@ pub struct Usage {
     pub cost: UsageCost,
 }
 
+impl Usage {
+    /// Calculate USD costs from token counts and per-million-token pricing.
+    pub fn calculate_cost(&mut self, cost: &Cost) {
+        self.cost.input = (self.input as f64 * cost.input) / 1_000_000.0;
+        self.cost.output = (self.output as f64 * cost.output) / 1_000_000.0;
+        self.cost.cache_read = (self.cache_read as f64 * cost.cache_read) / 1_000_000.0;
+        self.cost.cache_write = (self.cache_write as f64 * cost.cache_write) / 1_000_000.0;
+        self.cost.total =
+            self.cost.input + self.cost.output + self.cost.cache_read + self.cost.cache_write;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Messages
 // ---------------------------------------------------------------------------
@@ -330,6 +354,12 @@ pub struct Model {
     pub context_window: u64,
     /// Maximum output tokens.
     pub max_tokens: u64,
+    /// Provider-specific compatibility settings.
+    ///
+    /// Providers deserialize this to their expected compat struct (e.g.,
+    /// `OpenAICompletionsCompat`). When `None`, providers use default settings.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compat: Option<serde_json::Value>,
 }
 
 /// A tool definition with a JSON Schema for its parameters.

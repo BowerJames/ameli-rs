@@ -764,6 +764,7 @@ mod tests {
             cost: Cost::default(),
             context_window: 128_000,
             max_tokens: 16_384,
+            compat: None,
         }
     }
 
