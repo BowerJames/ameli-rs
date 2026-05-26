@@ -14,6 +14,7 @@ These are development guidelines that should be considered whenever planning, de
 - Use explicit error handling by propagating Result and Option via the ? operator or combinators; do not use .unwrap() or .expect().
 - `cargo fmt --check` must pass with no errors (code must be formatted).
 - `cargo clippy` must pass with no warnings or errors.
+- Do not add lint suppressions (e.g. `#[allow(clippy::...)]` or `#[expect(clippy::...)]`) without express permission from the user. If you encounter a situation where suppressing a lint seems warranted, raise it to the user immediately.
 
 # Code Review
 To launch an independent code review run:

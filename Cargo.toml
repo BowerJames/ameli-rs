@@ -14,6 +14,14 @@ edition = "2021"
 authors = ["Your Name <you@example.com>"]
 license = "MIT"
 
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+indexing_slicing = "warn"
+
 [workspace.dependencies]
 # Define shared external dependencies here. 
 # Sub-crates can pull them in using `serde = { workspace = true }` to keep versions perfectly in sync.
