@@ -1,0 +1,12 @@
+[lints]
+workspace = true
+
+[package]
+name = "ameli-agent"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+
+# Workspace crates
+ameli-agent-core = { path = "../ameli-agent-core" }
