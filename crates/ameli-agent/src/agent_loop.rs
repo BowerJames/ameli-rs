@@ -13,9 +13,8 @@ use crate::types::*;
 use ameli_ai::provider::{stream_simple, ApiRegistry};
 use ameli_ai::stream::{create_event_stream, EventStream};
 use ameli_ai::types::{
-    AssistantContentBlock, AssistantMessage, AssistantMessageEvent,
-    Context as LlmContext, Model, StopReason, ThinkingLevel as StreamThinkingLevel,
-    Tool as LlmTool, ToolCall, ToolResultMessage,
+    AssistantContentBlock, AssistantMessage, AssistantMessageEvent, Context as LlmContext, Model,
+    StopReason, ThinkingLevel as StreamThinkingLevel, Tool as LlmTool, ToolCall, ToolResultMessage,
 };
 use ameli_ai::validation::validate_tool_arguments;
 use futures::future::join_all;
@@ -166,7 +165,15 @@ pub async fn run_agent_loop_continue(
     emit(AgentEvent::AgentStart);
     emit(AgentEvent::TurnStart);
 
-    run_loop(context, &mut new_messages, &config, &cancel, &emit, &registry).await;
+    run_loop(
+        context,
+        &mut new_messages,
+        &config,
+        &cancel,
+        &emit,
+        &registry,
+    )
+    .await;
 
     Ok(new_messages)
 }
@@ -296,9 +303,15 @@ async fn run_loop(
             has_more_tool_calls = false;
 
             if !tool_calls.is_empty() {
-                let batch =
-                    execute_tool_calls(&current_context, &message, &tool_calls, config, cancel, emit)
-                        .await;
+                let batch = execute_tool_calls(
+                    &current_context,
+                    &message,
+                    &tool_calls,
+                    config,
+                    cancel,
+                    emit,
+                )
+                .await;
                 tool_results = batch.messages;
                 has_more_tool_calls = !batch.terminate;
 
@@ -417,11 +430,7 @@ async fn stream_assistant_response(
             Some(context.system_prompt.clone())
         },
         messages: llm_messages,
-        tools: if tools.is_empty() {
-            None
-        } else {
-            Some(tools)
-        },
+        tools: if tools.is_empty() { None } else { Some(tools) },
     };
 
     // 5. Resolve API key and build stream options
@@ -455,10 +464,10 @@ async fn stream_assistant_response(
 
         match event {
             AssistantMessageEvent::Start { .. } => {
-                partial_message = Some(
-                    partial.clone(),
-                );
-                context.messages.push(AgentMessage::Assistant(partial.clone()));
+                partial_message = Some(partial.clone());
+                context
+                    .messages
+                    .push(AgentMessage::Assistant(partial.clone()));
                 added_partial = true;
                 emit(AgentEvent::MessageStart {
                     message: AgentMessage::Assistant(partial),
@@ -466,15 +475,13 @@ async fn stream_assistant_response(
             }
             _ => {
                 if partial_message.is_some() {
-                    partial_message = Some(
-                        partial.clone(),
-                    );
+                    partial_message = Some(partial.clone());
                     if let Some(last) = context.messages.last_mut() {
                         *last = AgentMessage::Assistant(partial.clone());
                     }
                     emit(AgentEvent::MessageUpdate {
                         message: AgentMessage::Assistant(partial),
-                        assistant_message_event: event,
+                        assistant_message_event: Box::new(event),
                     });
                 }
             }
@@ -558,10 +565,9 @@ async fn execute_tool_calls(
     emit: &AgentEventSink,
 ) -> ExecutedToolCallBatch {
     let has_sequential = tool_calls.iter().any(|tc| {
-        context
-            .tools
-            .iter()
-            .any(|t| t.name() == tc.name && t.execution_mode() == Some(ToolExecutionMode::Sequential))
+        context.tools.iter().any(|t| {
+            t.name() == tc.name && t.execution_mode() == Some(ToolExecutionMode::Sequential)
+        })
     });
 
     if config.tool_execution == ToolExecutionMode::Sequential || has_sequential {
@@ -701,7 +707,8 @@ async fn execute_tool_calls_parallel(
                     .await;
                     emit_tool_execution_end(&finalized, &emit_clone);
                     finalized
-                }) as Pin<Box<dyn Future<Output = FinalizedToolCallOutcome> + Send>>;
+                })
+                    as Pin<Box<dyn Future<Output = FinalizedToolCallOutcome> + Send>>;
 
                 future_indices.push(idx);
                 pending_futures.push(fut);
@@ -717,13 +724,19 @@ async fn execute_tool_calls_parallel(
     let future_results = join_all(pending_futures).await;
 
     // Phase 3: Merge results in original order
-    let mut ordered: Vec<Option<FinalizedToolCallOutcome>> = (0..tool_calls.len()).map(|_| None).collect();
+    let mut ordered: Vec<Option<FinalizedToolCallOutcome>> =
+        (0..tool_calls.len()).map(|_| None).collect();
     for (idx, result) in immediate_results {
-        ordered[idx] = Some(result);
+        if let Some(slot) = ordered.get_mut(idx) {
+            *slot = Some(result);
+        }
     }
     for (future_idx, result) in future_results.into_iter().enumerate() {
-        let original_idx = future_indices[future_idx];
-        ordered[original_idx] = Some(result);
+        if let Some(&original_idx) = future_indices.get(future_idx) {
+            if let Some(slot) = ordered.get_mut(original_idx) {
+                *slot = Some(result);
+            }
+        }
     }
 
     let finalized_calls: Vec<FinalizedToolCallOutcome> = ordered.into_iter().flatten().collect();
@@ -800,7 +813,9 @@ async fn prepare_tool_call(
             if result.block {
                 return ToolCallPreparation::Immediate {
                     result: AgentToolResult::<Value>::error(
-                        result.reason.unwrap_or_else(|| "Tool execution was blocked".into()),
+                        result
+                            .reason
+                            .unwrap_or_else(|| "Tool execution was blocked".into()),
                     ),
                     is_error: true,
                 };
@@ -828,9 +843,7 @@ async fn execute_prepared_tool_call(
     args: Value,
     cancel: &Option<CancellationToken>,
 ) -> ExecutedToolCallOutcome {
-    let result = tool
-        .execute(&tool_call.id, args, cancel.clone())
-        .await;
+    let result = tool.execute(&tool_call.id, args, cancel.clone()).await;
     ExecutedToolCallOutcome {
         result,
         is_error: false,

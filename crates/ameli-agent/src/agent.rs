@@ -28,8 +28,7 @@ use crate::agent_loop::{run_agent_loop, run_agent_loop_continue};
 use crate::types::*;
 use ameli_ai::provider::ApiRegistry;
 use ameli_ai::types::{
-    Cost, MediaContentBlock, Message, Model, StreamOptions, TextContent, ThinkingBudgets,
-    Transport,
+    Cost, MediaContentBlock, Message, Model, StreamOptions, TextContent, ThinkingBudgets, Transport,
 };
 use std::collections::HashSet;
 use std::fmt;
@@ -44,6 +43,24 @@ use tokio_util::sync::CancellationToken;
 // ---------------------------------------------------------------------------
 
 type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
+
+// ---------------------------------------------------------------------------
+// Callback type aliases (keeps struct definitions clean)
+// ---------------------------------------------------------------------------
+
+type ConvertToLlmFn = dyn Fn(&[AgentMessage]) -> BoxFuture<Vec<Message>> + Send + Sync;
+type TransformContextFn = dyn Fn(&[AgentMessage], Option<CancellationToken>) -> BoxFuture<Vec<AgentMessage>>
+    + Send
+    + Sync;
+type GetApiKeyFn = dyn Fn(&str) -> BoxFuture<Option<String>> + Send + Sync;
+type BeforeToolCallFn = dyn Fn(&BeforeToolCallContext, Option<CancellationToken>) -> BoxFuture<Option<BeforeToolCallResult>>
+    + Send
+    + Sync;
+type AfterToolCallFn = dyn Fn(&AfterToolCallContext, Option<CancellationToken>) -> BoxFuture<Option<AfterToolCallResult>>
+    + Send
+    + Sync;
+type PrepareNextTurnFn =
+    dyn Fn(Option<CancellationToken>) -> BoxFuture<Option<AgentLoopTurnUpdate>> + Send + Sync;
 
 // ---------------------------------------------------------------------------
 // Default model
@@ -241,45 +258,24 @@ pub struct AgentOptions {
     /// Converts `AgentMessage[]` to LLM-compatible `Message[]` before each LLM
     /// call. When `None`, a default filter that keeps only standard messages is
     /// used.
-    pub convert_to_llm:
-        Option<Arc<dyn Fn(&[AgentMessage]) -> BoxFuture<Vec<Message>> + Send + Sync>>,
+    pub convert_to_llm: Option<Arc<ConvertToLlmFn>>,
 
     /// Optional transform applied to the context before `convert_to_llm`.
-    pub transform_context:
-        Option<Arc<dyn Fn(&[AgentMessage], Option<CancellationToken>) -> BoxFuture<Vec<AgentMessage>> + Send + Sync>>,
+    pub transform_context: Option<Arc<TransformContextFn>>,
 
     /// Resolves an API key dynamically for each LLM call.
-    pub get_api_key: Option<Arc<dyn Fn(&str) -> BoxFuture<Option<String>> + Send + Sync>>,
+    pub get_api_key: Option<Arc<GetApiKeyFn>>,
 
     /// Called before a tool is executed, after arguments have been validated.
-    pub before_tool_call: Option<
-        Arc<
-            dyn Fn(
-                    &BeforeToolCallContext,
-                    Option<CancellationToken>,
-                ) -> BoxFuture<Option<BeforeToolCallResult>>
-                + Send
-                + Sync,
-        >,
-    >,
+    pub before_tool_call: Option<Arc<BeforeToolCallFn>>,
 
     /// Called after a tool finishes executing.
-    pub after_tool_call: Option<
-        Arc<
-            dyn Fn(
-                    &AfterToolCallContext,
-                    Option<CancellationToken>,
-                ) -> BoxFuture<Option<AfterToolCallResult>>
-                + Send
-                + Sync,
-        >,
-    >,
+    pub after_tool_call: Option<Arc<AfterToolCallFn>>,
 
     /// Called after `TurnEnd` to optionally update model/context/thinking for
     /// the next turn. Receives the active `CancellationToken` so it can check
     /// for cancellation.
-    pub prepare_next_turn:
-        Option<Arc<dyn Fn(Option<CancellationToken>) -> BoxFuture<Option<AgentLoopTurnUpdate>> + Send + Sync>>,
+    pub prepare_next_turn: Option<Arc<PrepareNextTurnFn>>,
 
     /// How steering messages are drained. Default: `OneAtATime`.
     pub steering_mode: QueueMode,
@@ -346,8 +342,8 @@ impl Drop for Subscription {
         // is already held or the agent is dropped, this is a no-op.
         let inner = self.agent.inner.try_lock();
         if let Ok(mut inner) = inner {
-            if index < inner.subscribers.len() {
-                inner.subscribers[index] = None;
+            if let Some(slot) = inner.subscribers.get_mut(index) {
+                *slot = None;
             }
         }
     }
@@ -364,32 +360,12 @@ pub struct Agent {
     inner: Mutex<AgentInner>,
 
     // Immutable config captured at construction time.
-    convert_to_llm: Arc<dyn Fn(&[AgentMessage]) -> BoxFuture<Vec<Message>> + Send + Sync>,
-    transform_context:
-        Option<Arc<dyn Fn(&[AgentMessage], Option<CancellationToken>) -> BoxFuture<Vec<AgentMessage>> + Send + Sync>>,
-    get_api_key: Option<Arc<dyn Fn(&str) -> BoxFuture<Option<String>> + Send + Sync>>,
-    before_tool_call: Option<
-        Arc<
-            dyn Fn(
-                    &BeforeToolCallContext,
-                    Option<CancellationToken>,
-                ) -> BoxFuture<Option<BeforeToolCallResult>>
-                + Send
-                + Sync,
-        >,
-    >,
-    after_tool_call: Option<
-        Arc<
-            dyn Fn(
-                    &AfterToolCallContext,
-                    Option<CancellationToken>,
-                ) -> BoxFuture<Option<AfterToolCallResult>>
-                + Send
-                + Sync,
-        >,
-    >,
-    prepare_next_turn:
-        Option<Arc<dyn Fn(Option<CancellationToken>) -> BoxFuture<Option<AgentLoopTurnUpdate>> + Send + Sync>>,
+    convert_to_llm: Arc<ConvertToLlmFn>,
+    transform_context: Option<Arc<TransformContextFn>>,
+    get_api_key: Option<Arc<GetApiKeyFn>>,
+    before_tool_call: Option<Arc<BeforeToolCallFn>>,
+    after_tool_call: Option<Arc<AfterToolCallFn>>,
+    prepare_next_turn: Option<Arc<PrepareNextTurnFn>>,
     session_id: Option<String>,
     thinking_budgets: Option<ThinkingBudgets>,
     transport: Transport,
@@ -615,13 +591,17 @@ impl Agent {
                 AgentEvent::ToolExecutionEnd { tool_call_id, .. } => {
                     inner.pending_tool_calls.remove(tool_call_id);
                 }
-                AgentEvent::TurnEnd { message, .. } => {
-                    if let AgentMessage::Assistant(msg) = message {
-                        if msg.error_message.is_some() {
-                            inner.error_message = msg.error_message.clone();
-                        }
-                    }
+                AgentEvent::TurnEnd {
+                    message:
+                        AgentMessage::Assistant(ameli_ai::types::AssistantMessage {
+                            error_message: Some(err),
+                            ..
+                        }),
+                    ..
+                } => {
+                    inner.error_message = Some(err.clone());
                 }
+                AgentEvent::TurnEnd { .. } => {}
                 AgentEvent::AgentEnd { .. } => {
                     inner.streaming_message = None;
                 }
@@ -737,7 +717,9 @@ async fn build_loop_config(
     });
 
     // If skip_initial_steering_poll, wrap to return empty on first call
-    let skip = Arc::new(std::sync::atomic::AtomicBool::new(skip_initial_steering_poll));
+    let skip = Arc::new(std::sync::atomic::AtomicBool::new(
+        skip_initial_steering_poll,
+    ));
     let steering_fn: Arc<dyn Fn() -> BoxFuture<Vec<AgentMessage>> + Send + Sync> =
         Arc::new(move || {
             let skip = skip.clone();
@@ -769,14 +751,14 @@ async fn build_loop_config(
         get_api_key,
         should_stop_after_turn: None,
         prepare_next_turn: prepare_next_turn_fn.map(|hook| {
-            Arc::new(move |_ctx: &PrepareNextTurnContext| -> BoxFuture<Option<AgentLoopTurnUpdate>> {
-                let hook = hook.clone();
-                Box::pin(async move { hook(None).await })
-            })
+            Arc::new(
+                move |_ctx: &PrepareNextTurnContext| -> BoxFuture<Option<AgentLoopTurnUpdate>> {
+                    let hook = hook.clone();
+                    Box::pin(async move { hook(None).await })
+                },
+            )
                 as Arc<
-                    dyn Fn(
-                            &PrepareNextTurnContext,
-                        ) -> BoxFuture<Option<AgentLoopTurnUpdate>>
+                    dyn Fn(&PrepareNextTurnContext) -> BoxFuture<Option<AgentLoopTurnUpdate>>
                         + Send
                         + Sync,
                 >
@@ -1001,13 +983,12 @@ impl ArcAgent {
                 let config = build_loop_config(&agent, skip_initial_steering_poll).await;
 
                 let agent_for_emit = agent.clone();
-                let emit: crate::agent_loop::AgentEventSink =
-                    Arc::new(move |event: AgentEvent| {
-                        let agent = agent_for_emit.clone();
-                        tokio::spawn(async move {
-                            agent.process_event(event).await;
-                        });
+                let emit: crate::agent_loop::AgentEventSink = Arc::new(move |event: AgentEvent| {
+                    let agent = agent_for_emit.clone();
+                    tokio::spawn(async move {
+                        agent.process_event(event).await;
                     });
+                });
 
                 run_agent_loop(
                     messages,
@@ -1031,13 +1012,12 @@ impl ArcAgent {
                 let config = build_loop_config(&agent, false).await;
 
                 let agent_for_emit = agent.clone();
-                let emit: crate::agent_loop::AgentEventSink =
-                    Arc::new(move |event: AgentEvent| {
-                        let agent = agent_for_emit.clone();
-                        tokio::spawn(async move {
-                            agent.process_event(event).await;
-                        });
+                let emit: crate::agent_loop::AgentEventSink = Arc::new(move |event: AgentEvent| {
+                    let agent = agent_for_emit.clone();
+                    tokio::spawn(async move {
+                        agent.process_event(event).await;
                     });
+                });
 
                 run_agent_loop_continue(
                     context,
@@ -1289,10 +1269,14 @@ mod tests {
     async fn agent_steer_and_follow_up() {
         let agent = ArcAgent::new(AgentOptions::default());
         agent
-            .steer(AgentMessage::User(ameli_ai::types::UserMessage::text("steer")))
+            .steer(AgentMessage::User(ameli_ai::types::UserMessage::text(
+                "steer",
+            )))
             .await;
         agent
-            .follow_up(AgentMessage::User(ameli_ai::types::UserMessage::text("follow")))
+            .follow_up(AgentMessage::User(ameli_ai::types::UserMessage::text(
+                "follow",
+            )))
             .await;
         assert!(agent.has_queued_messages().await);
 
@@ -1427,7 +1411,10 @@ mod tests {
         // Second prompt should fail
         let result = agent.prompt("second".into()).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("already processing"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("already processing"));
 
         // Abort the hanging task (the stream never ends so the run won't
         // complete naturally — just abort the JoinHandle)
@@ -1514,12 +1501,10 @@ mod tests {
         let result = default_convert_to_llm(&messages).await;
         assert_eq!(result.len(), 1);
         match &result[0] {
-            Message::User(u) => {
-                match &u.content {
-                    ameli_ai::types::UserContent::Text(t) => assert_eq!(t, "hi"),
-                    _ => panic!("expected text content"),
-                }
-            }
+            Message::User(u) => match &u.content {
+                ameli_ai::types::UserContent::Text(t) => assert_eq!(t, "hi"),
+                _ => panic!("expected text content"),
+            },
             _ => panic!("expected User message"),
         }
     }

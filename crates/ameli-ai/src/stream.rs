@@ -8,9 +8,7 @@
 //! - [`EventStream`] — generic, for agent-level events
 //! - [`AssistantMessageEventStream`] — specialised with `result()` capture
 
-use crate::types::{
-    AssistantMessage, AssistantMessageEvent, StopReason, Usage,
-};
+use crate::types::{AssistantMessage, AssistantMessageEvent, StopReason, Usage};
 use tokio::sync::mpsc;
 
 // ---------------------------------------------------------------------------
@@ -59,10 +57,7 @@ impl<T: Send> EventStream<T> {
 /// Create a linked producer/consumer pair with an unbounded buffer.
 pub fn create_event_stream<T: Send>() -> (EventStreamProducer<T>, EventStream<T>) {
     let (tx, rx) = mpsc::unbounded_channel();
-    (
-        EventStreamProducer { tx },
-        EventStream { rx },
-    )
+    (EventStreamProducer { tx }, EventStream { rx })
 }
 
 // ---------------------------------------------------------------------------
@@ -95,12 +90,11 @@ pub struct AssistantMessageEventProducer {
 impl AssistantMessageEventProducer {
     /// Push a streaming event.
     ///
-    /// Returns `Err` if the consumer has already been dropped.
-    pub fn push(
-        &self,
-        event: AssistantMessageEvent,
-    ) -> Result<(), mpsc::error::SendError<AssistantMessageEvent>> {
-        self.tx.send(event)
+    /// If the consumer has already been dropped, the event is silently discarded.
+    /// All callers in the codebase discard the result, and a dropped receiver is
+    /// a terminal condition with no meaningful recovery.
+    pub fn push(&self, event: AssistantMessageEvent) {
+        let _ = self.tx.send(event);
     }
 
     /// Signal end-of-stream.
@@ -110,8 +104,8 @@ impl AssistantMessageEventProducer {
 }
 
 /// Create a linked producer/consumer pair for assistant message streaming.
-pub fn create_assistant_message_event_stream()
--> (AssistantMessageEventProducer, AssistantMessageEventStream) {
+pub fn create_assistant_message_event_stream(
+) -> (AssistantMessageEventProducer, AssistantMessageEventStream) {
     let (tx, rx) = mpsc::unbounded_channel();
     (
         AssistantMessageEventProducer { tx },
@@ -236,12 +230,10 @@ mod tests {
         let (producer, stream) = create_assistant_message_event_stream();
         let msg = sample_message("done");
 
-        producer
-            .push(AssistantMessageEvent::Done {
-                reason: StopReason::Stop,
-                message: msg.clone(),
-            })
-            .unwrap();
+        producer.push(AssistantMessageEvent::Done {
+            reason: StopReason::Stop,
+            message: msg.clone(),
+        });
         drop(producer);
 
         let result = stream.result().await;
@@ -255,17 +247,13 @@ mod tests {
         let partial = sample_message("");
         let msg = sample_message("final");
 
-        producer
-            .push(AssistantMessageEvent::Start {
-                partial: partial.clone(),
-            })
-            .unwrap();
-        producer
-            .push(AssistantMessageEvent::Done {
-                reason: StopReason::Stop,
-                message: msg.clone(),
-            })
-            .unwrap();
+        producer.push(AssistantMessageEvent::Start {
+            partial: partial.clone(),
+        });
+        producer.push(AssistantMessageEvent::Done {
+            reason: StopReason::Stop,
+            message: msg.clone(),
+        });
         drop(producer);
 
         // Iterate through all events
@@ -286,12 +274,10 @@ mod tests {
         let mut err_msg = sample_message("");
         err_msg.stop_reason = StopReason::Error;
 
-        producer
-            .push(AssistantMessageEvent::Error {
-                reason: StopReason::Error,
-                error: err_msg,
-            })
-            .unwrap();
+        producer.push(AssistantMessageEvent::Error {
+            reason: StopReason::Error,
+            error: err_msg,
+        });
         drop(producer);
 
         let result = stream.result().await;
@@ -303,16 +289,15 @@ mod tests {
         let (producer, stream) = create_assistant_message_event_stream();
         let partial = sample_message("");
 
-        producer
-            .push(AssistantMessageEvent::Start {
-                partial,
-            })
-            .unwrap();
+        producer.push(AssistantMessageEvent::Start { partial });
         drop(producer); // close without terminal event
 
         let result = stream.result().await;
         assert_eq!(result.stop_reason, StopReason::Error);
-        assert!(result.error_message.unwrap().contains("without a terminal event"));
+        assert!(result
+            .error_message
+            .unwrap()
+            .contains("without a terminal event"));
     }
 
     #[tokio::test]

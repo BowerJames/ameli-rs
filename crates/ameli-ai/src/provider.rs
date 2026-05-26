@@ -175,7 +175,7 @@ pub fn stream_simple(
         Err(error_message) => {
             let (producer, stream) = crate::stream::create_assistant_message_event_stream();
             let error_msg = make_error_message(model, &error_message);
-            let _ = producer.push(AssistantMessageEvent::Error {
+            producer.push(AssistantMessageEvent::Error {
                 reason: crate::types::StopReason::Error,
                 error: error_msg,
             });
@@ -207,7 +207,9 @@ pub async fn complete_simple(
     context: Context,
     options: StreamOptions,
 ) -> AssistantMessage {
-    stream_simple(registry, model, context, options).result().await
+    stream_simple(registry, model, context, options)
+        .result()
+        .await
 }
 
 /// Await a full LLM response using the [`DEFAULT_API_REGISTRY`].
@@ -258,9 +260,7 @@ fn now_ms() -> u64 {
 mod tests {
     use super::*;
     use crate::stream::create_assistant_message_event_stream;
-    use crate::types::{
-        AssistantContentBlock, Cost, InputType, StopReason, TextContent, Usage,
-    };
+    use crate::types::{AssistantContentBlock, Cost, InputType, StopReason, TextContent, Usage};
 
     /// A minimal model for testing.
     fn test_model() -> Model {
@@ -304,7 +304,7 @@ mod tests {
                 error_message: None,
                 timestamp: 0,
             };
-            let _ = producer.push(AssistantMessageEvent::Done {
+            producer.push(AssistantMessageEvent::Done {
                 reason: StopReason::Stop,
                 message: msg,
             });
