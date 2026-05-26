@@ -1,0 +1,21 @@
+[lints]
+workspace = true
+
+[package]
+name = "ameli-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "ameli"
+path = "src/main.rs"
+
+[dependencies]
+ameli-ai = { path = "../ameli-ai" }
+
+# External crates inherited from the root workspace
+serde_json = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+
+clap = { version = "4", features = ["derive"] }
