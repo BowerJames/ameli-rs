@@ -5,6 +5,7 @@ workspace = true
 name = "ameli-cli"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 
 [[bin]]
 name = "ameli"

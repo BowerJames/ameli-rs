@@ -26,6 +26,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ameli-agent"
+version = "0.1.0"
+dependencies = [
+ "ameli-agent-core",
+ "ameli-ai",
+ "serde_json",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "ameli-agent-core"
 version = "0.1.0"
 dependencies = [

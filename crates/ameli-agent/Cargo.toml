@@ -5,8 +5,15 @@ workspace = true
 name = "ameli-agent"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 
 # Workspace crates
 ameli-agent-core = { path = "../ameli-agent-core" }
+ameli-ai = { path = "../ameli-ai" }
+
+# External crates inherited from the root workspace
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
