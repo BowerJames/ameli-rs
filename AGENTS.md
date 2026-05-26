@@ -19,3 +19,8 @@ To launch an independent code review run:
 ```bash
 mypi --profile reviewer "/review <issue_number> <target_branch>"
 ```
+
+# References
+This project is heavily inspired by repositories that can be found in the `reference/` folder. Below are the projects that should be cloned into `reference/`. If any are not there you should ask the user to clone them.
+
+- [pi](https://github.com/earendil-works/pi.git): Contains `pi-ai` and `pi-agent-core` which are the typescript inspirations for `ameli-ai` and `ameli-agent`.
