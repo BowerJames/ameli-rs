@@ -250,14 +250,16 @@ async fn run_stream_inner(
                         output
                             .content
                             .push(AssistantContentBlock::Text(TextContent::new("")));
-                        text_block_index = Some(output.content.len() - 1);
-                        let idx = text_block_index.unwrap_or(0);
+                        let idx = output.content.len() - 1;
+                        text_block_index = Some(idx);
                         producer.push(AssistantMessageEvent::TextStart {
                             content_index: idx,
                             partial: output.clone(),
                         });
                     }
-                    let idx = text_block_index.unwrap_or(0);
+                    let Some(idx) = text_block_index else {
+                        continue;
+                    };
                     if let Some(AssistantContentBlock::Text(tc)) = output.content.get_mut(idx) {
                         tc.text.push_str(content);
                     }
@@ -280,14 +282,16 @@ async fn run_stream_inner(
                             redacted: None,
                         };
                         output.content.push(AssistantContentBlock::Thinking(block));
-                        thinking_block_index = Some(output.content.len() - 1);
-                        let idx = thinking_block_index.unwrap_or(0);
+                        let idx = output.content.len() - 1;
+                        thinking_block_index = Some(idx);
                         producer.push(AssistantMessageEvent::ThinkingStart {
                             content_index: idx,
                             partial: output.clone(),
                         });
                     }
-                    let idx = thinking_block_index.unwrap_or(0);
+                    let Some(idx) = thinking_block_index else {
+                        continue;
+                    };
                     if let Some(AssistantContentBlock::Thinking(tc)) = output.content.get_mut(idx) {
                         tc.thinking.push_str(reasoning);
                     }
