@@ -46,6 +46,7 @@ pub use context::ExtensionContext;
 pub use events::*;
 
 use ameli_agent_core::types::AgentTool;
+use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -322,47 +323,15 @@ impl ExtensionApi {
     }
 
     // -----------------------------------------------------------------------
-    // Accessors (used by the future ExtensionRunner)
+    // Extraction (used by the future ExtensionRunner)
     // -----------------------------------------------------------------------
 
-    /// Returns `true` if any notification or hook handlers have been registered.
-    pub fn has_handlers(&self) -> bool {
-        !self.agent_start_handlers.is_empty()
-            || !self.agent_end_handlers.is_empty()
-            || !self.turn_start_handlers.is_empty()
-            || !self.turn_end_handlers.is_empty()
-            || !self.message_start_handlers.is_empty()
-            || !self.message_update_handlers.is_empty()
-            || !self.message_end_handlers.is_empty()
-            || !self.tool_execution_start_handlers.is_empty()
-            || !self.tool_execution_end_handlers.is_empty()
-            || !self.tool_call_handlers.is_empty()
-            || !self.tool_result_handlers.is_empty()
-            || !self.context_handlers.is_empty()
-    }
-
-    /// Returns `true` if any handlers are registered for the given event type.
-    pub fn has_handlers_for(&self, event_type: &ExtensionEvent) -> bool {
-        match event_type {
-            ExtensionEvent::AgentStart(_) => !self.agent_start_handlers.is_empty(),
-            ExtensionEvent::AgentEnd(_) => !self.agent_end_handlers.is_empty(),
-            ExtensionEvent::TurnStart(_) => !self.turn_start_handlers.is_empty(),
-            ExtensionEvent::TurnEnd(_) => !self.turn_end_handlers.is_empty(),
-            ExtensionEvent::MessageStart(_) => !self.message_start_handlers.is_empty(),
-            ExtensionEvent::MessageUpdate(_) => !self.message_update_handlers.is_empty(),
-            ExtensionEvent::MessageEnd(_) => !self.message_end_handlers.is_empty(),
-            ExtensionEvent::ToolExecutionStart(_) => !self.tool_execution_start_handlers.is_empty(),
-            ExtensionEvent::ToolExecutionEnd(_) => !self.tool_execution_end_handlers.is_empty(),
-            ExtensionEvent::ToolCall(_) => !self.tool_call_handlers.is_empty(),
-            ExtensionEvent::ToolResult(_) => !self.tool_result_handlers.is_empty(),
-            ExtensionEvent::Context(_) => !self.context_handlers.is_empty(),
-        }
-    }
-
-    /// Take all registered notification handlers, leaving empty vectors.
+    /// Take all registered handlers and tools, leaving empty vectors.
     ///
-    /// Used by the runner to extract handlers after all extensions have been
-    /// initialized.
+    /// Used by the runner to extract registrations after all extensions have
+    /// been initialized. The returned [`ExtensionHandlers`] exposes handler
+    /// vectors the runner can check directly (e.g.,
+    /// `handlers.tool_call_handlers.is_empty()`).
     pub fn into_handlers(self) -> ExtensionHandlers {
         ExtensionHandlers {
             agent_start_handlers: self.agent_start_handlers,
@@ -385,6 +354,32 @@ impl ExtensionApi {
 impl Default for ExtensionApi {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl fmt::Debug for ExtensionApi {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ExtensionApi")
+            .field("on_agent_start", &self.agent_start_handlers.len())
+            .field("on_agent_end", &self.agent_end_handlers.len())
+            .field("on_turn_start", &self.turn_start_handlers.len())
+            .field("on_turn_end", &self.turn_end_handlers.len())
+            .field("on_message_start", &self.message_start_handlers.len())
+            .field("on_message_update", &self.message_update_handlers.len())
+            .field("on_message_end", &self.message_end_handlers.len())
+            .field(
+                "on_tool_execution_start",
+                &self.tool_execution_start_handlers.len(),
+            )
+            .field(
+                "on_tool_execution_end",
+                &self.tool_execution_end_handlers.len(),
+            )
+            .field("on_tool_call", &self.tool_call_handlers.len())
+            .field("on_tool_result", &self.tool_result_handlers.len())
+            .field("on_context", &self.context_handlers.len())
+            .field("tools", &self.tools.len())
+            .finish()
     }
 }
 
@@ -433,6 +428,32 @@ impl ExtensionHandlers {
             && self.tool_result_handlers.is_empty()
             && self.context_handlers.is_empty()
             && self.tools.is_empty()
+    }
+}
+
+impl fmt::Debug for ExtensionHandlers {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ExtensionHandlers")
+            .field("on_agent_start", &self.agent_start_handlers.len())
+            .field("on_agent_end", &self.agent_end_handlers.len())
+            .field("on_turn_start", &self.turn_start_handlers.len())
+            .field("on_turn_end", &self.turn_end_handlers.len())
+            .field("on_message_start", &self.message_start_handlers.len())
+            .field("on_message_update", &self.message_update_handlers.len())
+            .field("on_message_end", &self.message_end_handlers.len())
+            .field(
+                "on_tool_execution_start",
+                &self.tool_execution_start_handlers.len(),
+            )
+            .field(
+                "on_tool_execution_end",
+                &self.tool_execution_end_handlers.len(),
+            )
+            .field("on_tool_call", &self.tool_call_handlers.len())
+            .field("on_tool_result", &self.tool_result_handlers.len())
+            .field("on_context", &self.context_handlers.len())
+            .field("tools", &self.tools.len())
+            .finish()
     }
 }
 
@@ -555,10 +576,8 @@ mod tests {
             _cancel: Option<tokio_util::sync::CancellationToken>,
         ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
             Box::pin(async move {
-                AgentToolResult::text(
-                    params["message"].as_str().unwrap_or(""),
-                    serde_json::json!({}),
-                )
+                let message = params.get("message").and_then(|v| v.as_str()).unwrap_or("");
+                AgentToolResult::text(message, serde_json::json!({}))
             })
         }
     }
@@ -566,7 +585,9 @@ mod tests {
     #[test]
     fn api_starts_empty() {
         let api = ExtensionApi::new();
-        assert!(!api.has_handlers());
+        assert!(api.agent_start_handlers.is_empty());
+        assert!(api.tool_call_handlers.is_empty());
+        assert!(api.tools.is_empty());
         assert!(api.into_handlers().is_empty());
     }
 
@@ -576,7 +597,14 @@ mod tests {
         api.register_tool(Arc::new(EchoTool));
         let handlers = api.into_handlers();
         assert_eq!(handlers.tools.len(), 1);
-        assert_eq!(handlers.tools[0].name(), "echo");
+        assert_eq!(
+            handlers
+                .tools
+                .first()
+                .unwrap_or_else(|| panic!("expected at least one tool"))
+                .name(),
+            "echo"
+        );
     }
 
     #[test]
@@ -591,24 +619,21 @@ mod tests {
     }
 
     #[test]
-    fn has_handlers_for_checks_specific_event() {
+    fn has_agent_start_handler() {
         let mut api = ExtensionApi::new();
-        assert!(!api.has_handlers_for(&ExtensionEvent::AgentStart(AgentStartEvent)));
-        assert!(
-            !api.has_handlers_for(&ExtensionEvent::ToolCall(ToolCallEvent {
-                tool_call_id: String::new(),
-                tool_name: String::new(),
-                args: serde_json::Value::Null,
-            }))
-        );
+        assert!(api.agent_start_handlers.is_empty());
 
         api.on_agent_start(|_, _| Box::pin(async {}));
-        assert!(api.has_handlers_for(&ExtensionEvent::AgentStart(AgentStartEvent)));
-        assert!(
-            !api.has_handlers_for(&ExtensionEvent::AgentEnd(AgentEndEvent {
-                messages: vec![]
-            }))
-        );
+        assert_eq!(api.agent_start_handlers.len(), 1);
+    }
+
+    #[test]
+    fn has_tool_call_handler() {
+        let mut api = ExtensionApi::new();
+        assert!(api.tool_call_handlers.is_empty());
+
+        api.on_tool_call(|_, _| Box::pin(async { None }));
+        assert_eq!(api.tool_call_handlers.len(), 1);
     }
 
     #[tokio::test]
@@ -623,9 +648,14 @@ mod tests {
         };
         let ctx = ExtensionContext::for_testing();
 
-        let result = (handlers.tool_call_handlers[0])(event, ctx).await;
-        assert!(result.is_some());
-        let result = result.unwrap();
+        let handler = handlers
+            .tool_call_handlers
+            .first()
+            .unwrap_or_else(|| panic!("expected at least one tool_call handler"));
+        let result = handler(event, ctx).await;
+        let Some(result) = result else {
+            panic!("tool_call handler for 'bash' should return Some");
+        };
         assert!(result.block);
         assert_eq!(result.reason.as_deref(), Some("bash is blocked"));
     }
@@ -642,7 +672,11 @@ mod tests {
         };
         let ctx = ExtensionContext::for_testing();
 
-        let result = (handlers.tool_call_handlers[0])(event, ctx).await;
+        let handler = handlers
+            .tool_call_handlers
+            .first()
+            .unwrap_or_else(|| panic!("expected at least one tool_call handler"));
+        let result = handler(event, ctx).await;
         assert!(result.is_none());
     }
 

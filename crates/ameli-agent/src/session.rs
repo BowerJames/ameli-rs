@@ -636,6 +636,17 @@ mod tests {
 
     // -- build_session_context tests --
 
+    /// Helper: get message at index, panicking with context if out of bounds.
+    fn get_msg(ctx: &SessionContext, index: usize) -> &AgentMessage {
+        ctx.messages.get(index).unwrap_or_else(|| {
+            panic!(
+                "expected at least {} messages, got {}",
+                index + 1,
+                ctx.messages.len()
+            )
+        })
+    }
+
     #[test]
     fn empty_path_returns_defaults() {
         let ctx = build_session_context(&[]);
@@ -653,9 +664,9 @@ mod tests {
         ];
         let ctx = build_session_context(&path);
         assert_eq!(ctx.messages.len(), 3);
-        assert_eq!(ctx.messages[0].role(), "user");
-        assert_eq!(ctx.messages[1].role(), "assistant");
-        assert_eq!(ctx.messages[2].role(), "user");
+        assert_eq!(get_msg(&ctx, 0).role(), "user");
+        assert_eq!(get_msg(&ctx, 1).role(), "assistant");
+        assert_eq!(get_msg(&ctx, 2).role(), "user");
     }
 
     #[test]
@@ -711,11 +722,11 @@ mod tests {
         // Expect: compaction summary, kept1, new1
         assert_eq!(ctx.messages.len(), 3);
         // First message is the compaction summary (user message)
-        assert_eq!(ctx.messages[0].role(), "user");
+        assert_eq!(get_msg(&ctx, 0).role(), "user");
         // Second is kept1
-        assert_eq!(ctx.messages[1].role(), "user");
+        assert_eq!(get_msg(&ctx, 1).role(), "user");
         // Third is new1
-        assert_eq!(ctx.messages[2].role(), "user");
+        assert_eq!(get_msg(&ctx, 2).role(), "user");
     }
 
     #[test]
@@ -727,8 +738,8 @@ mod tests {
         let ctx = build_session_context(&path);
         // Message + branch summary converted to user message
         assert_eq!(ctx.messages.len(), 2);
-        assert_eq!(ctx.messages[0].role(), "user");
-        assert_eq!(ctx.messages[1].role(), "user");
+        assert_eq!(get_msg(&ctx, 0).role(), "user");
+        assert_eq!(get_msg(&ctx, 1).role(), "user");
     }
 
     #[test]
@@ -741,7 +752,7 @@ mod tests {
         )];
         let ctx = build_session_context(&path);
         assert_eq!(ctx.messages.len(), 1);
-        assert_eq!(ctx.messages[0].role(), "my_ext");
+        assert_eq!(get_msg(&ctx, 0).role(), "my_ext");
     }
 
     #[test]

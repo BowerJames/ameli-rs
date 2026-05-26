@@ -100,6 +100,10 @@ pub struct ToolCallEvent {
     /// Name of the tool about to execute.
     pub tool_name: String,
     /// Validated arguments for the tool call.
+    ///
+    /// This field is immutable in the current API — handlers receive an owned
+    /// copy but mutations do not propagate to subsequent handlers or the agent
+    /// loop. Future work may add argument patching via [`ToolCallResult`].
     pub args: Value,
 }
 
