@@ -23,65 +23,6 @@ use std::sync::Arc;
 // Internal CustomAgentMessage implementations
 // ---------------------------------------------------------------------------
 
-/// Compaction summary injected as a user message into the LLM context.
-#[allow(dead_code)]
-#[derive(Clone)]
-struct CompactionSummaryMessage {
-    summary: String,
-    tokens_before: u64,
-    timestamp: u64,
-}
-
-impl CustomAgentMessage for CompactionSummaryMessage {
-    fn message_type(&self) -> &str {
-        "compactionSummary"
-    }
-    fn clone_boxed(&self) -> Box<dyn CustomAgentMessage> {
-        Box::new(self.clone())
-    }
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({
-            "summary": self.summary,
-            "tokensBefore": self.tokens_before,
-        })
-    }
-    fn fmt_debug(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CompactionSummaryMessage")
-            .field("summary", &self.summary)
-            .field("tokens_before", &self.tokens_before)
-            .finish()
-    }
-}
-
-/// Branch summary injected as a user message into the LLM context.
-#[allow(dead_code)]
-#[derive(Clone)]
-struct BranchSummaryCustomMessage {
-    summary: String,
-    from_id: String,
-}
-
-impl CustomAgentMessage for BranchSummaryCustomMessage {
-    fn message_type(&self) -> &str {
-        "branchSummary"
-    }
-    fn clone_boxed(&self) -> Box<dyn CustomAgentMessage> {
-        Box::new(self.clone())
-    }
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({
-            "summary": self.summary,
-            "fromId": self.from_id,
-        })
-    }
-    fn fmt_debug(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("BranchSummaryCustomMessage")
-            .field("summary", &self.summary)
-            .field("from_id", &self.from_id)
-            .finish()
-    }
-}
-
 /// Extension-injected message content wrapped as a custom agent message.
 #[derive(Clone)]
 struct ExtensionCustomMessage {
@@ -144,11 +85,13 @@ pub fn build_session_context(path: &[SessionEntry]) -> SessionContext {
     }
 
     // Walk path to extract settings and find the last compaction.
+    // Model resolution: last-wins, with assistant messages overwriting
+    // explicit ModelChange entries (matches the TS reference behavior).
     let mut thinking_level = "off".to_string();
     let mut model: Option<ModelRef> = None;
-    let mut compaction: Option<&CompactionEntry> = None;
+    let mut compaction: Option<(&CompactionEntry, usize)> = None;
 
-    for entry in path {
+    for (idx, entry) in path.iter().enumerate() {
         match entry {
             SessionEntry::ThinkingLevelChange(e) => {
                 thinking_level = e.thinking_level.clone();
@@ -167,8 +110,9 @@ pub fn build_session_context(path: &[SessionEntry]) -> SessionContext {
                     });
                 }
             }
+            // Only the most recent compaction applies.
             SessionEntry::Compaction(e) => {
-                compaction = Some(e);
+                compaction = Some((e, idx));
             }
             _ => {}
         }
@@ -189,29 +133,9 @@ pub fn build_session_context(path: &[SessionEntry]) -> SessionContext {
         _ => {}
     };
 
-    if let Some(comp) = compaction {
+    if let Some((comp, compaction_idx)) = compaction {
         // Emit compaction summary first.
         messages.push(compaction_summary_to_agent_message(comp));
-
-        // Find compaction index in path.
-        let compaction_idx = path
-            .iter()
-            .position(|e| matches!(e, SessionEntry::Compaction(c) if c.id == comp.id));
-
-        let compaction_idx = match compaction_idx {
-            Some(idx) => idx,
-            None => {
-                // Should not happen, but handle gracefully.
-                for entry in path {
-                    append_message(entry, &mut messages);
-                }
-                return SessionContext {
-                    messages,
-                    thinking_level,
-                    model,
-                };
-            }
-        };
 
         // Emit kept messages (from firstKeptEntryId up to compaction).
         let mut found_first_kept = false;
@@ -328,12 +252,30 @@ fn now_ms_from_iso(iso: &str) -> u64 {
     if iso.len() < 20 {
         return 0;
     }
-    let year: i64 = iso[0..4].parse().unwrap_or(1970);
-    let month: i64 = iso[5..7].parse().unwrap_or(1);
-    let day: i64 = iso[8..10].parse().unwrap_or(1);
-    let hour: i64 = iso[11..13].parse().unwrap_or(0);
-    let minute: i64 = iso[14..16].parse().unwrap_or(0);
-    let second: i64 = iso[17..19].parse().unwrap_or(0);
+    let year: i64 = match iso[0..4].parse() {
+        Ok(v) => v,
+        Err(_) => return 0,
+    };
+    let month: i64 = match iso[5..7].parse() {
+        Ok(v) => v,
+        Err(_) => return 0,
+    };
+    let day: i64 = match iso[8..10].parse() {
+        Ok(v) => v,
+        Err(_) => return 0,
+    };
+    let hour: i64 = match iso[11..13].parse() {
+        Ok(v) => v,
+        Err(_) => return 0,
+    };
+    let minute: i64 = match iso[14..16].parse() {
+        Ok(v) => v,
+        Err(_) => return 0,
+    };
+    let second: i64 = match iso[17..19].parse() {
+        Ok(v) => v,
+        Err(_) => return 0,
+    };
 
     // Days from year 0 using civil_from_days logic, then convert to unix.
     let days_since_epoch = days_from_civil(year, month, day) - 719468;
