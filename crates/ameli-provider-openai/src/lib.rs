@@ -7,7 +7,7 @@
 //! # Usage
 //!
 //! ```no_run
-//! use ameli_ai::provider::ApiRegistry;
+//! use ameli_ai::api::ApiRegistry;
 //! use ameli_provider_openai::OpenAICompletionsProvider;
 //!
 //! let registry = ApiRegistry::new();
@@ -23,7 +23,7 @@ pub mod types;
 pub use compat::OpenAICompletionsCompat;
 pub use provider::OpenAICompletionsProvider;
 
-use ameli_ai::provider::ApiRegistry;
+use ameli_ai::api::ApiRegistry;
 
 /// Register the OpenAI Completions provider for the `"openai-completions"` API.
 pub fn register(registry: &ApiRegistry) {

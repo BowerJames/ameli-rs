@@ -10,7 +10,7 @@
 //! requests stop, or cancellation fires.
 
 use crate::types::*;
-use ameli_ai::provider::{stream_simple, ApiRegistry};
+use ameli_ai::api::{stream_simple, ApiRegistry};
 use ameli_ai::stream::{create_event_stream, EventStream};
 use ameli_ai::types::{
     AssistantContentBlock, AssistantMessage, AssistantMessageEvent, Context as LlmContext, Model,

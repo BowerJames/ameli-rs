@@ -9,7 +9,7 @@ use crate::json::parse_streaming_json;
 use crate::messages::build_request_params;
 use crate::types::{ChatCompletionChunk, ChunkUsage};
 
-use ameli_ai::provider::StreamFn;
+use ameli_ai::api::StreamFn;
 use ameli_ai::stream::{create_assistant_message_event_stream, AssistantMessageEventProducer};
 use ameli_ai::types::{
     AssistantContentBlock, AssistantMessage, AssistantMessageEvent, Context, Cost, Model,
