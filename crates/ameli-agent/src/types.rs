@@ -97,7 +97,7 @@ pub struct ModelChangeEntry {
 }
 
 /// A compaction summary that replaces older messages with a condensed form.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CompactionEntry {
     /// Unique entry identifier.
     pub id: String,
@@ -118,7 +118,7 @@ pub struct CompactionEntry {
 }
 
 /// A summary of an abandoned branch, kept for LLM context continuity.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BranchSummaryEntry {
     /// Unique entry identifier.
     pub id: String,
@@ -152,7 +152,7 @@ pub struct CustomEntry {
 }
 
 /// An extension-injected message that participates in LLM context.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CustomMessageEntry {
     /// Unique entry identifier.
     pub id: String,
