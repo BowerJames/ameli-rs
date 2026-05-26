@@ -12,6 +12,8 @@ This document provides guidelines for AI coding agents working on this codebase.
 These are development guidelines that should be considered whenever planning, developing or reviewing all feature and bugs. They must be adhered to wherever possible and highlighted when they are not.
 
 - Use explicit error handling by propagating Result and Option via the ? operator or combinators; do not use .unwrap() or .expect().
+- `cargo fmt --check` must pass with no errors (code must be formatted).
+- `cargo clippy` must pass with no warnings or errors.
 
 # Code Review
 To launch an independent code review run:
