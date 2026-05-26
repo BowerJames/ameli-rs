@@ -4,14 +4,14 @@
 //! Streams SSE chunks from the provider, emitting [`AssistantMessageEvent`]s
 //! for text, thinking, and tool call content.
 
-use crate::compat::get_compat;
-use crate::json::parse_streaming_json;
-use crate::messages::build_request_params;
-use crate::types::{ChatCompletionChunk, ChunkUsage};
+use super::compat::get_compat;
+use super::json::parse_streaming_json;
+use super::messages::build_request_params;
+use super::types::{ChatCompletionChunk, ChunkUsage};
 
-use ameli_ai::api::StreamFn;
-use ameli_ai::stream::{create_assistant_message_event_stream, AssistantMessageEventProducer};
-use ameli_ai::types::{
+use crate::api::StreamFn;
+use crate::stream::{create_assistant_message_event_stream, AssistantMessageEventProducer};
+use crate::types::{
     AssistantContentBlock, AssistantMessage, AssistantMessageEvent, Context, Cost, Model,
     StopReason, StreamOptions, TextContent, ThinkingContent, ToolCall, Usage,
 };
@@ -53,7 +53,7 @@ impl StreamFn for OpenAICompletionsProvider {
         model: &Model,
         context: Context,
         options: StreamOptions,
-    ) -> ameli_ai::stream::AssistantMessageEventStream {
+    ) -> crate::stream::AssistantMessageEventStream {
         let (producer, stream) = create_assistant_message_event_stream();
         let client = self.client.clone();
         let model = model.clone();
@@ -272,10 +272,10 @@ async fn run_stream_inner(
             }
 
             // --- Thinking / reasoning ---
-            if let Some(reasoning) = crate::types::get_reasoning_content(&delta) {
+            if let Some(reasoning) = super::types::get_reasoning_content(&delta) {
                 if !reasoning.is_empty() {
                     if thinking_block_index.is_none() {
-                        let sig = crate::types::get_reasoning_field_name(&delta);
+                        let sig = super::types::get_reasoning_field_name(&delta);
                         let block = ThinkingContent {
                             thinking: String::new(),
                             thinking_signature: Some(sig),
@@ -566,7 +566,7 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::ChunkPromptTokensDetails;
+    use crate::built_in_apis::openai_completions::types::ChunkPromptTokensDetails;
 
     #[test]
     fn map_stop_reason_known_values() {

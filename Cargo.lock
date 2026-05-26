@@ -43,19 +43,8 @@ name = "ameli-ai"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "jsonschema",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "ameli-provider-openai"
-version = "0.1.0"
-dependencies = [
- "ameli-ai",
- "anyhow",
  "futures",
+ "jsonschema",
  "reqwest",
  "serde",
  "serde_json",
