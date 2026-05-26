@@ -7,10 +7,10 @@
 //! # Usage
 //!
 //! ```no_run
-//! use ameli_ai::provider::ProviderRegistry;
+//! use ameli_ai::provider::ApiRegistry;
 //! use ameli_provider_openai::OpenAICompletionsProvider;
 //!
-//! let registry = ProviderRegistry::new();
+//! let registry = ApiRegistry::new();
 //! ameli_provider_openai::register(&registry);
 //! ```
 
@@ -23,10 +23,10 @@ pub mod types;
 pub use compat::OpenAICompletionsCompat;
 pub use provider::OpenAICompletionsProvider;
 
-use ameli_ai::provider::ProviderRegistry;
+use ameli_ai::provider::ApiRegistry;
 
 /// Register the OpenAI Completions provider for the `"openai-completions"` API.
-pub fn register(registry: &ProviderRegistry) {
+pub fn register(registry: &ApiRegistry) {
     registry.register(
         "openai-completions",
         Box::new(OpenAICompletionsProvider::new()),

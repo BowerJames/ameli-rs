@@ -26,7 +26,7 @@
 
 use crate::agent_loop::{run_agent_loop, run_agent_loop_continue};
 use crate::types::*;
-use ameli_ai::provider::ProviderRegistry;
+use ameli_ai::provider::ApiRegistry;
 use ameli_ai::types::{
     Cost, MediaContentBlock, Message, Model, StreamOptions, TextContent, ThinkingBudgets,
     Transport,
@@ -302,8 +302,8 @@ pub struct AgentOptions {
     /// Tool execution strategy for multi-tool-call assistant messages.
     pub tool_execution: ToolExecutionMode,
 
-    /// Provider registry. When `None`, a new empty registry is used.
-    pub registry: Option<Arc<ProviderRegistry>>,
+    /// API protocol registry. When `None`, a new empty registry is used.
+    pub api_registry: Option<Arc<ApiRegistry>>,
 }
 
 impl Default for AgentOptions {
@@ -323,7 +323,7 @@ impl Default for AgentOptions {
             transport: None,
             max_retry_delay_ms: None,
             tool_execution: ToolExecutionMode::Parallel,
-            registry: None,
+            api_registry: None,
         }
     }
 }
@@ -395,7 +395,7 @@ pub struct Agent {
     transport: Transport,
     max_retry_delay_ms: Option<u64>,
     tool_execution: ToolExecutionMode,
-    registry: Arc<ProviderRegistry>,
+    api_registry: Arc<ApiRegistry>,
 }
 
 impl Agent {
@@ -429,9 +429,9 @@ impl Agent {
             subscribers: Vec::new(),
         };
 
-        let registry = options
-            .registry
-            .unwrap_or_else(|| Arc::new(ProviderRegistry::new()));
+        let api_registry = options
+            .api_registry
+            .unwrap_or_else(|| Arc::new(ApiRegistry::new()));
 
         Self {
             inner: Mutex::new(inner),
@@ -448,7 +448,7 @@ impl Agent {
             transport: options.transport.unwrap_or(Transport::Auto),
             max_retry_delay_ms: options.max_retry_delay_ms,
             tool_execution: options.tool_execution,
-            registry,
+            api_registry,
         }
     }
 
@@ -1015,7 +1015,7 @@ impl ArcAgent {
                     config,
                     emit,
                     Some(cancel),
-                    agent.registry.clone(),
+                    agent.api_registry.clone(),
                 )
                 .await;
             }
@@ -1044,7 +1044,7 @@ impl ArcAgent {
                     config,
                     emit,
                     Some(cancel),
-                    agent.registry.clone(),
+                    agent.api_registry.clone(),
                 )
                 .await?;
                 Ok(())
@@ -1342,7 +1342,7 @@ mod tests {
 
     #[tokio::test]
     async fn agent_prompt_with_no_provider_still_completes() {
-        let registry = Arc::new(ProviderRegistry::new());
+        let registry = Arc::new(ApiRegistry::new());
         let agent = ArcAgent::new(AgentOptions {
             initial_state: Some(AgentState {
                 system_prompt: String::new(),
@@ -1355,7 +1355,7 @@ mod tests {
                 pending_tool_calls: HashSet::new(),
                 error_message: None,
             }),
-            registry: Some(registry),
+            api_registry: Some(registry),
             ..Default::default()
         });
         let result = agent.prompt("hello".into()).await;
@@ -1394,7 +1394,7 @@ mod tests {
             }
         }
 
-        let registry = Arc::new(ProviderRegistry::new());
+        let registry = Arc::new(ApiRegistry::new());
         registry.register("test-api", Box::new(HangingProvider));
 
         let agent = ArcAgent::new(AgentOptions {
@@ -1409,7 +1409,7 @@ mod tests {
                 pending_tool_calls: HashSet::new(),
                 error_message: None,
             }),
-            registry: Some(registry),
+            api_registry: Some(registry),
             ..Default::default()
         });
 
@@ -1443,7 +1443,7 @@ mod tests {
         let event_count = Arc::new(AtomicUsize::new(0));
         let event_count_clone = event_count.clone();
 
-        let registry = Arc::new(ProviderRegistry::new());
+        let registry = Arc::new(ApiRegistry::new());
 
         let agent = ArcAgent::new(AgentOptions {
             initial_state: Some(AgentState {
@@ -1457,7 +1457,7 @@ mod tests {
                 pending_tool_calls: HashSet::new(),
                 error_message: None,
             }),
-            registry: Some(registry),
+            api_registry: Some(registry),
             ..Default::default()
         });
 

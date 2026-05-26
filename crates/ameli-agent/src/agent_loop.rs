@@ -10,7 +10,7 @@
 //! requests stop, or cancellation fires.
 
 use crate::types::*;
-use ameli_ai::provider::{stream_simple, ProviderRegistry};
+use ameli_ai::provider::{stream_simple, ApiRegistry};
 use ameli_ai::stream::{create_event_stream, EventStream};
 use ameli_ai::types::{
     AssistantContentBlock, AssistantMessage, AssistantMessageEvent,
@@ -48,7 +48,7 @@ pub fn agent_loop(
     context: AgentContext,
     config: AgentLoopConfig,
     cancel: Option<CancellationToken>,
-    registry: Arc<ProviderRegistry>,
+    registry: Arc<ApiRegistry>,
 ) -> EventStream<AgentEvent> {
     let (producer, stream) = create_event_stream::<AgentEvent>();
 
@@ -77,7 +77,7 @@ pub fn agent_loop_continue(
     context: AgentContext,
     config: AgentLoopConfig,
     cancel: Option<CancellationToken>,
-    registry: Arc<ProviderRegistry>,
+    registry: Arc<ApiRegistry>,
 ) -> EventStream<AgentEvent> {
     let (producer, stream) = create_event_stream::<AgentEvent>();
 
@@ -111,7 +111,7 @@ pub async fn run_agent_loop(
     config: AgentLoopConfig,
     emit: AgentEventSink,
     cancel: Option<CancellationToken>,
-    registry: Arc<ProviderRegistry>,
+    registry: Arc<ApiRegistry>,
 ) -> Vec<AgentMessage> {
     let mut new_messages: Vec<AgentMessage> = prompts.clone();
     let mut current_context = context;
@@ -150,7 +150,7 @@ pub async fn run_agent_loop_continue(
     config: AgentLoopConfig,
     emit: AgentEventSink,
     cancel: Option<CancellationToken>,
-    registry: Arc<ProviderRegistry>,
+    registry: Arc<ApiRegistry>,
 ) -> anyhow::Result<Vec<AgentMessage>> {
     let last = context
         .messages
@@ -223,7 +223,7 @@ async fn run_loop(
     config: &AgentLoopConfig,
     cancel: &Option<CancellationToken>,
     emit: &AgentEventSink,
-    registry: &ProviderRegistry,
+    registry: &ApiRegistry,
 ) {
     let mut current_model: Model = config.model.clone();
     let mut current_reasoning: Option<StreamThinkingLevel> = config.stream_options.reasoning;
@@ -394,7 +394,7 @@ async fn stream_assistant_response(
     config: &AgentLoopConfig,
     cancel: &Option<CancellationToken>,
     emit: &AgentEventSink,
-    registry: &ProviderRegistry,
+    registry: &ApiRegistry,
 ) -> AssistantMessage {
     // 1. Transform context (AgentMessage[] → AgentMessage[])
     let transformed = if let Some(transform) = &config.transform_context {
