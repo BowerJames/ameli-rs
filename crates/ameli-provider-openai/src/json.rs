@@ -103,7 +103,9 @@ fn strip_trailing_incomplete(input: &str) -> String {
     let mut i = chars.len();
     while i > 0 {
         i -= 1;
-        let ch = chars[i];
+        let Some(&ch) = chars.get(i) else {
+            break;
+        };
         if ch == ',' {
             cut = i;
             break;

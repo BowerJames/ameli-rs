@@ -15,17 +15,13 @@ use serde::{Deserialize, Serialize};
 /// How thinking/reasoning is expressed in the request body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ThinkingFormat {
     /// OpenAI standard: `reasoning_effort: "low" | "medium" | "high"`.
+    #[default]
     OpenAi,
     /// ZAI / Qwen style: top-level `enable_thinking: true/false`.
     Zai,
-}
-
-impl Default for ThinkingFormat {
-    fn default() -> Self {
-        Self::OpenAi
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -35,17 +31,13 @@ impl Default for ThinkingFormat {
 /// Which JSON field name to use for maximum output tokens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum MaxTokensField {
     /// Modern OpenAI field: `max_completion_tokens`.
+    #[default]
     MaxCompletionTokens,
     /// Legacy / compatible field: `max_tokens`.
     MaxTokens,
-}
-
-impl Default for MaxTokensField {
-    fn default() -> Self {
-        Self::MaxCompletionTokens
-    }
 }
 
 // ---------------------------------------------------------------------------

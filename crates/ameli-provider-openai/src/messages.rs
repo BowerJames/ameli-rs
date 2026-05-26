@@ -6,10 +6,10 @@
 use crate::compat::{MaxTokensField, OpenAICompletionsCompat, ThinkingFormat};
 use ameli_ai::types::{
     AssistantContentBlock, Context, InputType, MediaContentBlock, Message, Model,
-    ModelThinkingLevel, StopReason, StreamOptions, ThinkingContent, Tool,
-    ToolCall, ToolResultMessage, UserContent,
+    ModelThinkingLevel, StopReason, StreamOptions, ThinkingContent, Tool, ToolCall,
+    ToolResultMessage, UserContent,
 };
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -22,10 +22,9 @@ pub fn build_request_params(
     options: &StreamOptions,
     compat: &OpenAICompletionsCompat,
 ) -> Value {
-    let mut params = json!({
-        "model": model.id,
-        "stream": true,
-    });
+    let mut map = Map::new();
+    map.insert("model".into(), json!(model.id));
+    map.insert("stream".into(), json!(true));
 
     // --- Messages ---
     let mut messages = Vec::new();
@@ -44,42 +43,42 @@ pub fn build_request_params(
     let supports_images = model.input.contains(&InputType::Image);
     let converted = convert_messages(context, model, supports_images);
     messages.extend(converted);
-    params["messages"] = json!(messages);
+    map.insert("messages".into(), json!(messages));
 
     // --- Tools ---
     if let Some(tools) = &context.tools {
         if !tools.is_empty() {
             let converted_tools = convert_tools(tools, compat);
-            params["tools"] = json!(converted_tools);
+            map.insert("tools".into(), json!(converted_tools));
             if compat.zai_tool_stream {
-                params["tool_stream"] = json!(true);
+                map.insert("tool_stream".into(), json!(true));
             }
         }
     }
 
     // --- Streaming options ---
     if compat.supports_usage_in_streaming {
-        params["stream_options"] = json!({ "include_usage": true });
+        map.insert("stream_options".into(), json!({ "include_usage": true }));
     }
 
     if compat.supports_store {
-        params["store"] = json!(false);
+        map.insert("store".into(), json!(false));
     }
 
     // --- Token limits ---
     if let Some(max_tokens) = options.max_tokens {
         match compat.max_tokens_field {
             MaxTokensField::MaxCompletionTokens => {
-                params["max_completion_tokens"] = json!(max_tokens);
+                map.insert("max_completion_tokens".into(), json!(max_tokens));
             }
             MaxTokensField::MaxTokens => {
-                params["max_tokens"] = json!(max_tokens);
+                map.insert("max_tokens".into(), json!(max_tokens));
             }
         }
     }
 
     if let Some(temp) = options.temperature {
-        params["temperature"] = json!(temp);
+        map.insert("temperature".into(), json!(temp));
     }
 
     // --- Thinking / reasoning ---
@@ -89,17 +88,17 @@ pub fn build_request_params(
                 ThinkingFormat::OpenAi => {
                     if compat.supports_reasoning_effort {
                         let effort = resolve_reasoning_effort(reasoning, model);
-                        params["reasoning_effort"] = json!(effort);
+                        map.insert("reasoning_effort".into(), json!(effort));
                     }
                 }
                 ThinkingFormat::Zai => {
-                    params["enable_thinking"] = json!(true);
+                    map.insert("enable_thinking".into(), json!(true));
                 }
             }
         }
     }
 
-    params
+    Value::Object(map)
 }
 
 // ---------------------------------------------------------------------------
@@ -145,24 +144,24 @@ fn convert_user_message(msg: &ameli_ai::types::UserMessage, supports_images: boo
         UserContent::Blocks(blocks) => {
             let parts: Vec<Value> = blocks
                 .iter()
-                .filter_map(|block| match block {
-                    MediaContentBlock::Text(tc) => Some(json!({
+                .map(|block| match block {
+                    MediaContentBlock::Text(tc) => json!({
                         "type": "text",
                         "text": tc.text,
-                    })),
+                    }),
                     MediaContentBlock::Image(img) => {
                         if supports_images {
-                            Some(json!({
+                            json!({
                                 "type": "image_url",
                                 "image_url": {
                                     "url": format!("data:{};base64,{}", img.mime_type, img.data),
                                 },
-                            }))
+                            })
                         } else {
-                            Some(json!({
+                            json!({
                                 "type": "text",
                                 "text": "(image omitted: model does not support images)",
-                            }))
+                            })
                         }
                     }
                 })
@@ -183,9 +182,8 @@ fn convert_assistant_message(
     msg: &ameli_ai::types::AssistantMessage,
     model: &Model,
 ) -> Option<Value> {
-    let is_same_model = msg.provider == model.provider
-        && msg.api == model.api
-        && msg.model == model.id;
+    let is_same_model =
+        msg.provider == model.provider && msg.api == model.api && msg.model == model.id;
 
     // Collect text content
     let text_parts: Vec<&str> = msg
@@ -218,40 +216,48 @@ fn convert_assistant_message(
         })
         .collect();
 
-    let mut result = json!({ "role": "assistant" });
+    let mut map = Map::new();
+    map.insert("role".into(), json!("assistant"));
 
     // Set content
     if !thinking_blocks.is_empty() {
         // Use the signature from the first block as the field name for replay
-        if let Some(sig) = &thinking_blocks[0].thinking_signature {
-            if !sig.is_empty() {
-                let thinking_text: String = thinking_blocks
-                    .iter()
-                    .map(|b| b.thinking.as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                result[sig.as_str()] = json!(thinking_text);
+        if let Some(thinking_block) = thinking_blocks.first() {
+            if let Some(sig) = &thinking_block.thinking_signature {
+                if !sig.is_empty() {
+                    let thinking_text: String = thinking_blocks
+                        .iter()
+                        .map(|b| b.thinking.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    map.insert(sig.clone(), json!(thinking_text));
+                }
             }
         }
-        result["content"] = if text.is_empty() {
-            Value::Null
-        } else {
-            json!(text)
-        };
+        map.insert(
+            "content".into(),
+            if text.is_empty() {
+                Value::Null
+            } else {
+                json!(text)
+            },
+        );
     } else if !text.is_empty() {
-        result["content"] = json!(text);
+        map.insert("content".into(), json!(text));
     } else {
-        result["content"] = Value::Null;
+        map.insert("content".into(), Value::Null);
     }
 
     if !tool_calls.is_empty() {
-        result["tool_calls"] = json!(tool_calls);
+        map.insert("tool_calls".into(), json!(tool_calls));
     }
+
+    let result = Value::Object(map);
 
     // Skip empty assistant messages
     let has_content = result
         .get("content")
-        .map_or(false, |c| c != &Value::Null && c != &json!(""));
+        .is_some_and(|c| c != &Value::Null && c != &json!(""));
     let has_tool_calls = result.get("tool_calls").is_some();
 
     if !has_content && !has_tool_calls {
@@ -263,14 +269,16 @@ fn convert_assistant_message(
 
 /// Convert a tool call for assistant message replay.
 fn convert_tool_call(tc: &ToolCall, is_same_model: bool) -> Value {
-    let mut result = json!({
-        "id": tc.id,
-        "type": "function",
-        "function": {
+    let mut map = Map::new();
+    map.insert("id".into(), json!(tc.id));
+    map.insert("type".into(), json!("function"));
+    map.insert(
+        "function".into(),
+        json!({
             "name": tc.name,
             "arguments": serde_json::to_string(&tc.arguments).unwrap_or_default(),
-        },
-    });
+        }),
+    );
 
     // Include reasoning_details for same-model replay if present
     if is_same_model {
@@ -282,13 +290,13 @@ fn convert_tool_call(tc: &ToolCall, is_same_model: bool) -> Value {
                     v => vec![v],
                 };
                 if !details.is_empty() {
-                    result["reasoning_details"] = json!(details);
+                    map.insert("reasoning_details".into(), json!(details));
                 }
             }
         }
     }
 
-    result
+    Value::Object(map)
 }
 
 /// Convert a tool result message.
@@ -325,17 +333,16 @@ fn convert_tools(tools: &[Tool], compat: &OpenAICompletionsCompat) -> Vec<Value>
     tools
         .iter()
         .map(|tool| {
-            let mut func = json!({
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": tool.parameters,
-            });
+            let mut func_map = Map::new();
+            func_map.insert("name".into(), json!(tool.name));
+            func_map.insert("description".into(), json!(tool.description));
+            func_map.insert("parameters".into(), tool.parameters.clone());
             if compat.supports_strict_mode {
-                func["strict"] = json!(false);
+                func_map.insert("strict".into(), json!(false));
             }
             json!({
                 "type": "function",
-                "function": func,
+                "function": Value::Object(func_map),
             })
         })
         .collect()
@@ -347,10 +354,7 @@ fn convert_tools(tools: &[Tool], compat: &OpenAICompletionsCompat) -> Vec<Value>
 
 /// Resolve the `reasoning_effort` value from the thinking level map or
 /// fall back to the level name.
-fn resolve_reasoning_effort(
-    reasoning: &ameli_ai::types::ThinkingLevel,
-    model: &Model,
-) -> String {
+fn resolve_reasoning_effort(reasoning: &ameli_ai::types::ThinkingLevel, model: &Model) -> String {
     let model_level: ModelThinkingLevel = (*reasoning).into();
     model
         .thinking_level_map
@@ -518,12 +522,9 @@ mod tests {
     fn reasoning_effort_from_thinking_level_map() {
         let model = Model {
             thinking_level_map: Some(
-                [(
-                    ModelThinkingLevel::High,
-                    Some("custom-high".to_string()),
-                )]
-                .into_iter()
-                .collect(),
+                [(ModelThinkingLevel::High, Some("custom-high".to_string()))]
+                    .into_iter()
+                    .collect(),
             ),
             ..test_model_with_reasoning()
         };

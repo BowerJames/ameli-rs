@@ -287,7 +287,11 @@ pub struct ToolResultMessage {
 
 impl ToolResultMessage {
     /// Create an error tool result for a given tool call.
-    pub fn error(tool_call_id: impl Into<String>, tool_name: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn error(
+        tool_call_id: impl Into<String>,
+        tool_name: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
         Self {
             tool_call_id: tool_call_id.into(),
             tool_name: tool_name.into(),

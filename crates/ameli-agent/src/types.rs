@@ -14,8 +14,8 @@
 //! - [`AgentContext`] / [`AgentState`] — context snapshots and mutable state
 
 use ameli_ai::types::{
-    AssistantMessage, AssistantMessageEvent, MediaContentBlock, Message, Model,
-    StreamOptions, TextContent, Tool, ToolCall, ToolResultMessage,
+    AssistantMessage, AssistantMessageEvent, MediaContentBlock, Message, Model, StreamOptions,
+    TextContent, Tool, ToolCall, ToolResultMessage,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -36,16 +36,11 @@ use tokio_util::sync::CancellationToken;
 /// - `Parallel`: tool calls are prepared sequentially, then allowed tools
 ///   execute concurrently. `tool_execution_end` is emitted in completion order,
 ///   while tool-result message artifacts are emitted later in source order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum ToolExecutionMode {
     Sequential,
+    #[default]
     Parallel,
-}
-
-impl Default for ToolExecutionMode {
-    fn default() -> Self {
-        Self::Parallel
-    }
 }
 
 /// How many queued messages are injected when the agent loop drains a queue.
@@ -55,15 +50,11 @@ impl Default for ToolExecutionMode {
 ///   later drain points.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[derive(Default)]
 pub enum QueueMode {
     All,
+    #[default]
     OneAtATime,
-}
-
-impl Default for QueueMode {
-    fn default() -> Self {
-        Self::OneAtATime
-    }
 }
 
 /// Thinking/reasoning level for models that support extended thinking.
@@ -433,7 +424,9 @@ impl fmt::Debug for dyn AgentTool {
 pub enum AgentEvent {
     // Agent lifecycle
     AgentStart,
-    AgentEnd { messages: Vec<AgentMessage> },
+    AgentEnd {
+        messages: Vec<AgentMessage>,
+    },
 
     // Turn lifecycle — a turn is one assistant response + any tool calls/results
     TurnStart,
@@ -443,13 +436,17 @@ pub enum AgentEvent {
     },
 
     // Message lifecycle — emitted for user, assistant, and toolResult messages
-    MessageStart { message: AgentMessage },
+    MessageStart {
+        message: AgentMessage,
+    },
     /// Only emitted for assistant messages during streaming.
     MessageUpdate {
         message: AgentMessage,
-        assistant_message_event: AssistantMessageEvent,
+        assistant_message_event: Box<AssistantMessageEvent>,
     },
-    MessageEnd { message: AgentMessage },
+    MessageEnd {
+        message: AgentMessage,
+    },
 
     // Tool execution lifecycle
     ToolExecutionStart {
@@ -605,6 +602,26 @@ pub struct AgentLoopTurnUpdate {
 type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
 // ---------------------------------------------------------------------------
+// Callback type aliases (keeps struct definitions clean)
+// ---------------------------------------------------------------------------
+
+type ConvertToLlmCb = dyn Fn(&[AgentMessage]) -> BoxFuture<Vec<Message>> + Send + Sync;
+type TransformContextCb = dyn Fn(&[AgentMessage], Option<CancellationToken>) -> BoxFuture<Vec<AgentMessage>>
+    + Send
+    + Sync;
+type GetApiKeyCb = dyn Fn(&str) -> BoxFuture<Option<String>> + Send + Sync;
+type ShouldStopAfterTurnCb = dyn Fn(&ShouldStopAfterTurnContext) -> BoxFuture<bool> + Send + Sync;
+type PrepareNextTurnCb =
+    dyn Fn(&PrepareNextTurnContext) -> BoxFuture<Option<AgentLoopTurnUpdate>> + Send + Sync;
+type GetMessagesCb = dyn Fn() -> BoxFuture<Vec<AgentMessage>> + Send + Sync;
+type BeforeToolCallCb = dyn Fn(&BeforeToolCallContext, Option<CancellationToken>) -> BoxFuture<Option<BeforeToolCallResult>>
+    + Send
+    + Sync;
+type AfterToolCallCb = dyn Fn(&AfterToolCallContext, Option<CancellationToken>) -> BoxFuture<Option<AfterToolCallResult>>
+    + Send
+    + Sync;
+
+// ---------------------------------------------------------------------------
 // AgentLoopConfig
 // ---------------------------------------------------------------------------
 
@@ -614,7 +631,6 @@ type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 /// lifecycle hooks, context transformation, and message queuing.
 pub struct AgentLoopConfig {
     // --- Required ---
-
     /// The model to use for LLM requests.
     pub model: Model,
 
@@ -627,21 +643,19 @@ pub struct AgentLoopConfig {
     /// be filtered out.
     ///
     /// **Contract:** must not panic. Return a safe fallback value instead.
-    pub convert_to_llm: Arc<dyn Fn(&[AgentMessage]) -> BoxFuture<Vec<Message>> + Send + Sync>,
+    pub convert_to_llm: Arc<ConvertToLlmCb>,
 
     // --- Stream options (from SimpleStreamOptions / StreamOptions) ---
     pub stream_options: StreamOptions,
 
     // --- Optional callbacks ---
-
     /// Optional transform applied to the context before `convert_to_llm`.
     ///
     /// Use for context window management (pruning old messages) or injecting
     /// context from external sources.
     ///
     /// **Contract:** must not panic. Return the original messages on error.
-    pub transform_context:
-        Option<Arc<dyn Fn(&[AgentMessage], Option<CancellationToken>) -> BoxFuture<Vec<AgentMessage>> + Send + Sync>>,
+    pub transform_context: Option<Arc<TransformContextCb>>,
 
     /// Resolves an API key dynamically for each LLM call.
     ///
@@ -649,20 +663,18 @@ pub struct AgentLoopConfig {
     /// tool execution.
     ///
     /// **Contract:** must not panic. Return `None` when no key is available.
-    pub get_api_key: Option<Arc<dyn Fn(&str) -> BoxFuture<Option<String>> + Send + Sync>>,
+    pub get_api_key: Option<Arc<GetApiKeyCb>>,
 
     /// Called after each turn fully completes. If it returns `true`, the loop
     /// emits `AgentEnd` and exits without starting another LLM call.
     ///
     /// **Contract:** must not panic.
-    pub should_stop_after_turn:
-        Option<Arc<dyn Fn(&ShouldStopAfterTurnContext) -> BoxFuture<bool> + Send + Sync>>,
+    pub should_stop_after_turn: Option<Arc<ShouldStopAfterTurnCb>>,
 
     /// Called after `TurnEnd` and before the loop decides whether another
     /// provider request should start. Return replacement state to affect the
     /// next turn, or `None` to keep current state.
-    pub prepare_next_turn:
-        Option<Arc<dyn Fn(&PrepareNextTurnContext) -> BoxFuture<Option<AgentLoopTurnUpdate>> + Send + Sync>>,
+    pub prepare_next_turn: Option<Arc<PrepareNextTurnCb>>,
 
     /// Returns steering messages to inject mid-run.
     ///
@@ -671,13 +683,13 @@ pub struct AgentLoopConfig {
     /// the next LLM call.
     ///
     /// **Contract:** must not panic. Return an empty vec when no messages.
-    pub get_steering_messages: Option<Arc<dyn Fn() -> BoxFuture<Vec<AgentMessage>> + Send + Sync>>,
+    pub get_steering_messages: Option<Arc<GetMessagesCb>>,
 
     /// Returns follow-up messages to process after the agent would otherwise
     /// stop.
     ///
     /// **Contract:** must not panic. Return an empty vec when no messages.
-    pub get_follow_up_messages: Option<Arc<dyn Fn() -> BoxFuture<Vec<AgentMessage>> + Send + Sync>>,
+    pub get_follow_up_messages: Option<Arc<GetMessagesCb>>,
 
     /// Tool execution mode. Default: `Parallel`.
     pub tool_execution: ToolExecutionMode,
@@ -686,15 +698,13 @@ pub struct AgentLoopConfig {
     ///
     /// Return a [`BeforeToolCallResult`] with `block: true` to prevent
     /// execution.
-    pub before_tool_call:
-        Option<Arc<dyn Fn(&BeforeToolCallContext, Option<CancellationToken>) -> BoxFuture<Option<BeforeToolCallResult>> + Send + Sync>>,
+    pub before_tool_call: Option<Arc<BeforeToolCallCb>>,
 
     /// Called after a tool finishes executing, before `ToolExecutionEnd` and
     /// tool-result message events are emitted.
     ///
     /// Return an [`AfterToolCallResult`] to override parts of the result.
-    pub after_tool_call:
-        Option<Arc<dyn Fn(&AfterToolCallContext, Option<CancellationToken>) -> BoxFuture<Option<AfterToolCallResult>> + Send + Sync>>,
+    pub after_tool_call: Option<Arc<AfterToolCallCb>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -816,7 +826,8 @@ mod tests {
         assert!(user.is_standard());
         assert!(user.as_message().is_some());
 
-        let tool_result = AgentMessage::ToolResult(ToolResultMessage::error("tc_1", "bash", "fail"));
+        let tool_result =
+            AgentMessage::ToolResult(ToolResultMessage::error("tc_1", "bash", "fail"));
         assert_eq!(tool_result.role(), "toolResult");
         assert!(tool_result.is_standard());
     }
@@ -922,10 +933,7 @@ mod tests {
             serde_json::to_string(&QueueMode::OneAtATime).unwrap(),
             r#""one-at-a-time""#
         );
-        assert_eq!(
-            serde_json::to_string(&QueueMode::All).unwrap(),
-            r#""all""#
-        );
+        assert_eq!(serde_json::to_string(&QueueMode::All).unwrap(), r#""all""#);
     }
 
     // -- BeforeToolCallResult --

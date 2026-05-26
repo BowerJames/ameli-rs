@@ -85,7 +85,7 @@ async fn run_stream(
         // pushed a terminal event, this push will fail (consumer dropped
         // after the stream was ended by a previous event) — that's fine.
         let error_msg = make_error_message(model, &e.to_string());
-        let _ = producer.push(AssistantMessageEvent::Error {
+        producer.push(AssistantMessageEvent::Error {
             reason: StopReason::Error,
             error: error_msg,
         });
@@ -111,10 +111,7 @@ async fn run_stream_inner(
     let base_url = model.base_url.trim_end_matches('/');
     let url = format!("{}/chat/completions", base_url);
 
-    let mut request = client
-        .post(&url)
-        .bearer_auth(&api_key)
-        .json(&params);
+    let mut request = client.post(&url).bearer_auth(&api_key).json(&params);
 
     if let Some(timeout) = options.timeout_ms {
         request = request.timeout(std::time::Duration::from_millis(timeout));
@@ -153,7 +150,7 @@ async fn run_stream_inner(
     };
 
     // Emit start
-    let _ = producer.push(AssistantMessageEvent::Start {
+    producer.push(AssistantMessageEvent::Start {
         partial: output.clone(),
     });
 
@@ -168,8 +165,7 @@ async fn run_stream_inner(
 
     // Main SSE loop
     while let Some(chunk_result) = byte_stream.next().await {
-        let bytes = chunk_result
-            .map_err(|e| anyhow::anyhow!("Stream read error: {}", e))?;
+        let bytes = chunk_result.map_err(|e| anyhow::anyhow!("Stream read error: {}", e))?;
         let lines = line_buffer.push_bytes(&bytes);
 
         for line in lines {
@@ -188,7 +184,7 @@ async fn run_stream_inner(
                     producer,
                 );
 
-                let _ = producer.push(if has_finish_reason {
+                producer.push(if has_finish_reason {
                     match output.stop_reason {
                         StopReason::Error | StopReason::Aborted => AssistantMessageEvent::Error {
                             reason: output.stop_reason,
@@ -237,8 +233,7 @@ async fn run_stream_inner(
             if let Some(reason) = &choice.finish_reason {
                 output.stop_reason = map_stop_reason(reason);
                 if let StopReason::Error = output.stop_reason {
-                    output.error_message =
-                        Some(format!("Provider finish_reason: {}", reason));
+                    output.error_message = Some(format!("Provider finish_reason: {}", reason));
                 }
                 has_finish_reason = true;
             }
@@ -255,19 +250,21 @@ async fn run_stream_inner(
                         output
                             .content
                             .push(AssistantContentBlock::Text(TextContent::new("")));
-                        text_block_index = Some(output.content.len() - 1);
-                        let _ = producer.push(AssistantMessageEvent::TextStart {
-                            content_index: text_block_index.unwrap(),
+                        let idx = output.content.len() - 1;
+                        text_block_index = Some(idx);
+                        producer.push(AssistantMessageEvent::TextStart {
+                            content_index: idx,
                             partial: output.clone(),
                         });
                     }
-                    if let Some(AssistantContentBlock::Text(tc)) =
-                        output.content.get_mut(text_block_index.unwrap())
-                    {
+                    let Some(idx) = text_block_index else {
+                        continue;
+                    };
+                    if let Some(AssistantContentBlock::Text(tc)) = output.content.get_mut(idx) {
                         tc.text.push_str(content);
                     }
-                    let _ = producer.push(AssistantMessageEvent::TextDelta {
-                        content_index: text_block_index.unwrap(),
+                    producer.push(AssistantMessageEvent::TextDelta {
+                        content_index: idx,
                         delta: content.clone(),
                         partial: output.clone(),
                     });
@@ -284,22 +281,22 @@ async fn run_stream_inner(
                             thinking_signature: Some(sig),
                             redacted: None,
                         };
-                        output
-                            .content
-                            .push(AssistantContentBlock::Thinking(block));
-                        thinking_block_index = Some(output.content.len() - 1);
-                        let _ = producer.push(AssistantMessageEvent::ThinkingStart {
-                            content_index: thinking_block_index.unwrap(),
+                        output.content.push(AssistantContentBlock::Thinking(block));
+                        let idx = output.content.len() - 1;
+                        thinking_block_index = Some(idx);
+                        producer.push(AssistantMessageEvent::ThinkingStart {
+                            content_index: idx,
                             partial: output.clone(),
                         });
                     }
-                    if let Some(AssistantContentBlock::Thinking(tc)) =
-                        output.content.get_mut(thinking_block_index.unwrap())
-                    {
+                    let Some(idx) = thinking_block_index else {
+                        continue;
+                    };
+                    if let Some(AssistantContentBlock::Thinking(tc)) = output.content.get_mut(idx) {
                         tc.thinking.push_str(reasoning);
                     }
-                    let _ = producer.push(AssistantMessageEvent::ThinkingDelta {
-                        content_index: thinking_block_index.unwrap(),
+                    producer.push(AssistantMessageEvent::ThinkingDelta {
+                        content_index: idx,
                         delta: reasoning.to_string(),
                         partial: output.clone(),
                     });
@@ -311,27 +308,24 @@ async fn run_stream_inner(
                 for tc in tool_calls {
                     let stream_idx = tc.index.unwrap_or(0);
 
-                    let content_idx =
-                        if let Some(&idx) = tool_call_blocks.get(&stream_idx) {
-                            idx
-                        } else {
-                            let block = ToolCall {
-                                id: String::new(),
-                                name: String::new(),
-                                arguments: serde_json::json!({}),
-                                thought_signature: None,
-                            };
-                            output
-                                .content
-                                .push(AssistantContentBlock::ToolCall(block));
-                            let idx = output.content.len() - 1;
-                            tool_call_blocks.insert(stream_idx, idx);
-                            let _ = producer.push(AssistantMessageEvent::ToolCallStart {
-                                content_index: idx,
-                                partial: output.clone(),
-                            });
-                            idx
+                    let content_idx = if let Some(&idx) = tool_call_blocks.get(&stream_idx) {
+                        idx
+                    } else {
+                        let block = ToolCall {
+                            id: String::new(),
+                            name: String::new(),
+                            arguments: serde_json::json!({}),
+                            thought_signature: None,
                         };
+                        output.content.push(AssistantContentBlock::ToolCall(block));
+                        let idx = output.content.len() - 1;
+                        tool_call_blocks.insert(stream_idx, idx);
+                        producer.push(AssistantMessageEvent::ToolCallStart {
+                            content_index: idx,
+                            partial: output.clone(),
+                        });
+                        idx
+                    };
 
                     if let Some(id) = &tc.id {
                         if let Some(AssistantContentBlock::ToolCall(block)) =
@@ -349,8 +343,7 @@ async fn run_stream_inner(
                             }
                         }
                         if let Some(args_delta) = &func.arguments {
-                            let partial =
-                                partial_tool_args.entry(stream_idx).or_default();
+                            let partial = partial_tool_args.entry(stream_idx).or_default();
                             partial.push_str(args_delta);
 
                             let parsed = parse_streaming_json(partial);
@@ -360,7 +353,7 @@ async fn run_stream_inner(
                                 block.arguments = parsed;
                             }
 
-                            let _ = producer.push(AssistantMessageEvent::ToolCallDelta {
+                            producer.push(AssistantMessageEvent::ToolCallDelta {
                                 content_index: content_idx,
                                 delta: args_delta.clone(),
                                 partial: output.clone(),
@@ -382,7 +375,7 @@ async fn run_stream_inner(
         producer,
     );
 
-    let _ = producer.push(AssistantMessageEvent::Error {
+    producer.push(AssistantMessageEvent::Error {
         reason: StopReason::Error,
         error: make_error_message(model, "Stream ended unexpectedly without [DONE]"),
     });
@@ -404,7 +397,7 @@ fn finish_all_blocks(
 ) {
     if let Some(idx) = text_block_index {
         if let Some(AssistantContentBlock::Text(tc)) = output.content.get(*idx) {
-            let _ = producer.push(AssistantMessageEvent::TextEnd {
+            producer.push(AssistantMessageEvent::TextEnd {
                 content_index: *idx,
                 content: tc.text.clone(),
                 partial: output.clone(),
@@ -414,7 +407,7 @@ fn finish_all_blocks(
 
     if let Some(idx) = thinking_block_index {
         if let Some(AssistantContentBlock::Thinking(tc)) = output.content.get(*idx) {
-            let _ = producer.push(AssistantMessageEvent::ThinkingEnd {
+            producer.push(AssistantMessageEvent::ThinkingEnd {
                 content_index: *idx,
                 content: tc.thinking.clone(),
                 partial: output.clone(),
@@ -434,7 +427,7 @@ fn finish_all_blocks(
         }
 
         if let Some(AssistantContentBlock::ToolCall(block)) = output.content.get(content_idx) {
-            let _ = producer.push(AssistantMessageEvent::ToolCallEnd {
+            producer.push(AssistantMessageEvent::ToolCallEnd {
                 content_index: content_idx,
                 tool_call: block.clone(),
                 partial: output.clone(),
@@ -466,9 +459,7 @@ impl SseLineBuffer {
 
         let mut lines = Vec::new();
         while let Some(pos) = self.buffer.find('\n') {
-            let line = self.buffer[..pos]
-                .trim_end_matches('\r')
-                .to_string();
+            let line = self.buffer[..pos].trim_end_matches('\r').to_string();
             self.buffer = self.buffer[pos + 1..].to_string();
             lines.push(line);
         }
@@ -528,7 +519,9 @@ fn parse_chunk_usage(raw: &ChunkUsage, cost: &Cost) -> Usage {
         .as_ref()
         .and_then(|d| d.cache_write_tokens)
         .unwrap_or(0);
-    let input = prompt_tokens.saturating_sub(cache_read).saturating_sub(cache_write);
+    let input = prompt_tokens
+        .saturating_sub(cache_read)
+        .saturating_sub(cache_write);
     let output_tokens = raw.completion_tokens.unwrap_or(0);
 
     let mut usage = Usage {

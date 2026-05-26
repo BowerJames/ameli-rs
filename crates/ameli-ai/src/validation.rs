@@ -57,7 +57,13 @@ pub fn validate_tool_arguments(
 
     let errors: Vec<String> = validator
         .iter_errors(&args)
-        .map(|e| format!("  - {}: {}", format_instance_path(&e.instance_path.to_string()), e))
+        .map(|e| {
+            format!(
+                "  - {}: {}",
+                format_instance_path(&e.instance_path.to_string()),
+                e
+            )
+        })
         .collect();
 
     Err(ToolValidationError {
@@ -139,9 +145,8 @@ fn coerce_with_schema(value: &mut Value, schema: &Value) {
     }
 
     // Recurse into object properties
-    if value.is_object() {
+    if let Some(obj) = value.as_object_mut() {
         if let Some(properties) = schema.get("properties").and_then(|v| v.as_object()) {
-            let obj = value.as_object_mut().unwrap();
             for (key, prop_schema) in properties {
                 if let Some(field) = obj.get_mut(key) {
                     coerce_with_schema(field, prop_schema);
@@ -156,7 +161,6 @@ fn coerce_with_schema(value: &mut Value, schema: &Value) {
                     .and_then(|v| v.as_object())
                     .map(|p| p.keys().map(|k| k.as_str()).collect())
                     .unwrap_or_default();
-                let obj = value.as_object_mut().unwrap();
                 for (key, field) in obj.iter_mut() {
                     if !defined_keys.contains(key.as_str()) {
                         coerce_with_schema(field, additional);
@@ -167,12 +171,11 @@ fn coerce_with_schema(value: &mut Value, schema: &Value) {
     }
 
     // Recurse into array items
-    if value.is_array() {
+    if let Some(arr) = value.as_array_mut() {
         if let Some(items) = schema.get("items") {
-            let arr = value.as_array_mut().unwrap();
-            if items.is_array() {
+            if let Some(items_arr) = items.as_array() {
                 // Tuple validation: each position has its own schema
-                for (i, item_schema) in items.as_array().unwrap().iter().enumerate() {
+                for (i, item_schema) in items_arr.iter().enumerate() {
                     if let Some(elem) = arr.get_mut(i) {
                         coerce_with_schema(elem, item_schema);
                     }
@@ -211,7 +214,12 @@ fn coerce_to_type(value: &mut Value, type_name: &str) {
 fn coerce_primitive(value: Value, type_name: &str) -> Value {
     match type_name {
         "number" => match &value {
-            Value::String(s) => s.trim().parse::<f64>().ok().map(Value::from).unwrap_or(value),
+            Value::String(s) => s
+                .trim()
+                .parse::<f64>()
+                .ok()
+                .map(Value::from)
+                .unwrap_or(value),
             Value::Bool(b) => Value::from(if *b { 1.0 } else { 0.0 }),
             Value::Null => Value::from(0.0),
             _ => value,
@@ -225,7 +233,11 @@ fn coerce_primitive(value: Value, type_name: &str) -> Value {
                 .map(|f| Value::from(f as i64))
                 .unwrap_or(value),
             Value::Bool(b) => Value::from(if *b { 1_i64 } else { 0_i64 }),
-            Value::Number(n) => n.as_f64().filter(|f| f.fract() == 0.0).map(|f| Value::from(f as i64)).unwrap_or(value),
+            Value::Number(n) => n
+                .as_f64()
+                .filter(|f| f.fract() == 0.0)
+                .map(|f| Value::from(f as i64))
+                .unwrap_or(value),
             Value::Null => Value::from(0_i64),
             _ => value,
         },
