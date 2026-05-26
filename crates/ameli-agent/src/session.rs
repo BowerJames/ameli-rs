@@ -16,6 +16,7 @@ use crate::types::{
 };
 use ameli_agent_core::types::{AgentMessage, CustomAgentMessage};
 use ameli_ai::types::{MediaContentBlock, TextContent};
+use chrono::{DateTime, Utc};
 use std::fmt;
 use std::sync::Arc;
 
@@ -183,39 +184,7 @@ pub fn build_session_context(path: &[SessionEntry]) -> SessionContext {
 // ---------------------------------------------------------------------------
 
 fn now_iso8601() -> String {
-    // Use a simple ISO 8601 timestamp without requiring chrono.
-    let duration = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = duration.as_secs();
-    // Calculate date components from unix timestamp (UTC).
-    let days = secs / 86400;
-    let time_of_day = secs % 86400;
-    let hours = time_of_day / 3600;
-    let minutes = (time_of_day % 3600) / 60;
-    let seconds = time_of_day % 60;
-
-    // Calculate year/month/day from days since epoch.
-    let (year, month, day) = civil_from_days(days as i64);
-
-    format!("{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}Z")
-}
-
-/// Convert days since Unix epoch to (year, month, day).
-/// Algorithm from http://howardhinnant.github.io/date_algorithms.html
-fn civil_from_days(z: i64) -> (i64, i64, i64) {
-    let z = z + 719468;
-    let era = z.div_euclid(146097);
-    let doe = z.rem_euclid(146097);
-    let yoe = (doe - doe.div_euclid(1460) + doe.div_euclid(36524) - doe.div_euclid(146096))
-        .div_euclid(365);
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe.div_euclid(4) - yoe.div_euclid(100));
-    let mp = (5 * doy + 2).div_euclid(153);
-    let d = doy - (153 * mp + 2).div_euclid(5) + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    (y, m, d)
+    Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
 fn compaction_summary_to_agent_message(entry: &CompactionEntry) -> AgentMessage {
@@ -256,52 +225,9 @@ fn custom_message_entry_to_agent_message(entry: &CustomMessageEntry) -> AgentMes
 /// Best-effort parse of ISO 8601 timestamp to milliseconds.
 /// Falls back to 0 if parsing fails.
 fn now_ms_from_iso(iso: &str) -> u64 {
-    // Simple parser for "YYYY-MM-DDTHH:MM:SSZ" format.
-    if iso.len() < 20 {
-        return 0;
-    }
-    let year: i64 = match iso[0..4].parse() {
-        Ok(v) => v,
-        Err(_) => return 0,
-    };
-    let month: i64 = match iso[5..7].parse() {
-        Ok(v) => v,
-        Err(_) => return 0,
-    };
-    let day: i64 = match iso[8..10].parse() {
-        Ok(v) => v,
-        Err(_) => return 0,
-    };
-    let hour: i64 = match iso[11..13].parse() {
-        Ok(v) => v,
-        Err(_) => return 0,
-    };
-    let minute: i64 = match iso[14..16].parse() {
-        Ok(v) => v,
-        Err(_) => return 0,
-    };
-    let second: i64 = match iso[17..19].parse() {
-        Ok(v) => v,
-        Err(_) => return 0,
-    };
-
-    // Days from year 0 using civil_from_days logic, then convert to unix.
-    let days_since_epoch = days_from_civil(year, month, day) - 719468;
-    let secs = days_since_epoch * 86400 + hour * 3600 + minute * 60 + second;
-    secs.unsigned_abs() * 1000
-}
-
-/// Inverse of civil_from_days: compute days since epoch from (year, month, day).
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let y = if month <= 2 { year - 1 } else { year };
-    let m = if month <= 2 { month + 9 } else { month - 3 };
-    let era = y.div_euclid(400);
-    let yoe = y.rem_euclid(400);
-    365 * yoe + yoe.div_euclid(4) - yoe.div_euclid(100)
-        + era * 146097
-        + (153 * m + 2).div_euclid(5)
-        + day
-        - 1
+    DateTime::parse_from_rfc3339(iso)
+        .map(|dt| dt.timestamp_millis().unsigned_abs())
+        .unwrap_or(0)
 }
 
 // ---------------------------------------------------------------------------

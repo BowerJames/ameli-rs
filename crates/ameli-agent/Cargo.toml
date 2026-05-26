@@ -18,3 +18,4 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { version = "0.7", features = ["rt"] }
+chrono = { version = "0.4", features = ["serde"] }

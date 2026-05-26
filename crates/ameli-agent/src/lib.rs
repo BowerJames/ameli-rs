@@ -42,7 +42,7 @@ pub mod types;
 
 // Re-export primary types for convenience.
 pub use error::SessionError;
-pub use extension::{Extension, ExtensionApi, ExtensionContext, ExtensionHandlers};
+pub use extension::{Extension, ExtensionApi, ExtensionContext};
 pub use session::{BranchSummaryData, Session};
 pub use storage::{SessionMetadata, SessionStorage};
 pub use types::{
