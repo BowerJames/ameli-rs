@@ -77,7 +77,7 @@ pub type ThinkingLevel = ameli_ai::types::ModelThinkingLevel;
 /// # Examples
 ///
 /// ```
-/// use ameli_agent::types::CustomAgentMessage;
+/// use ameli_agent_core::types::CustomAgentMessage;
 /// use serde_json::json;
 /// use std::fmt;
 ///
@@ -313,7 +313,7 @@ pub type AgentToolUpdateCallback<T> = Box<dyn Fn(AgentToolResult<T>) + Send + Sy
 /// # Examples
 ///
 /// ```
-/// use ameli_agent::types::{AgentTool, AgentToolResult, ToolExecutionMode};
+/// use ameli_agent_core::types::{AgentTool, AgentToolResult, ToolExecutionMode};
 /// use ameli_ai::types::Tool;
 /// use serde_json::{json, Value};
 /// use std::fmt;
