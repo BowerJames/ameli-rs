@@ -84,13 +84,13 @@ pub trait StreamFn: Send + Sync {
 /// # Examples
 ///
 /// ```
-/// use ameli_ai::provider::{ApiRegistry, StreamFn};
+/// use ameli_ai::api::{ApiRegistry, StreamFn};
 /// # use ameli_ai::types::{Model, Context, StreamOptions};
 /// # use ameli_ai::stream::AssistantMessageEventStream;
 ///
 /// let registry = ApiRegistry::new();
 /// // registry.register("openai-completions", Box::new(MyProvider));
-/// // ameli_ai::provider::stream_simple(&registry, &model, context, options);
+/// // ameli_ai::api::stream_simple(&registry, &model, context, options);
 /// ```
 pub struct ApiRegistry {
     apis: RwLock<HashMap<String, Box<dyn StreamFn>>>,

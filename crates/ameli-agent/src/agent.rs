@@ -26,7 +26,7 @@
 
 use crate::agent_loop::{run_agent_loop, run_agent_loop_continue};
 use crate::types::*;
-use ameli_ai::provider::ApiRegistry;
+use ameli_ai::api::ApiRegistry;
 use ameli_ai::types::{
     Cost, MediaContentBlock, Message, Model, StreamOptions, TextContent, ThinkingBudgets, Transport,
 };
@@ -1128,7 +1128,7 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ameli_ai::provider::StreamFn;
+    use ameli_ai::api::StreamFn;
     use ameli_ai::stream::create_assistant_message_event_stream;
     use ameli_ai::types::{Context as LlmContext, Cost, InputType};
 
