@@ -4,7 +4,7 @@
 //! content blocks, messages, models, streaming events, and stream options.
 //!
 //! These types are a restricted, lightweight port of the pi-ai TypeScript
-//! package, focused on what ameli-agent actually needs.
+//! package, focused on what ameli-agent-core actually needs.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
