@@ -1,17 +1,22 @@
-//! LLM provider trait, registry, and top-level streaming entry points.
+//! LLM provider trait, API registry, and top-level streaming entry points.
 //!
 //! This module defines the [`StreamFn`] trait — the single abstraction boundary
-//! between agent orchestration code and concrete LLM providers. Providers are
-//! registered by API protocol name (e.g., `"openai-responses"`, `"anthropic-messages"`)
-//! and looked up at request time via the model's [`Model::api`] field.
+//! between agent orchestration code and concrete LLM providers. Implementations
+//! are registered by API protocol name (e.g., `"openai-completions"`,
+//! `"anthropic-messages"`) and looked up at request time via the model's
+//! [`Model::api`] field.
 //!
 //! # Registry
 //!
-//! [`ProviderRegistry`] holds registered [`StreamFn`] implementations keyed by
-//! API protocol name. It uses interior mutability so callers share a single
+//! [`ApiRegistry`] holds registered [`StreamFn`] implementations keyed by
+//! API protocol name. This is an **API-protocol** registry, not a provider
+//! registry — multiple providers (OpenAI, ZAI, etc.) may share the same API
+//! protocol and are all handled by a single registered [`StreamFn`], with
+//! provider-specific behavior configured per-model via [`Model::base_url`] and
+//! [`Model::compat`]. It uses interior mutability so callers share a single
 //! instance by reference while still allowing registration at runtime.
 //!
-//! A global default ([`DEFAULT_REGISTRY`]) is provided for convenience, accessed
+//! A global default ([`DEFAULT_API_REGISTRY`]) is provided for convenience, accessed
 //! via [`stream_simple_global`] and [`complete_simple_global`].
 //!
 //! # Entry points
@@ -59,54 +64,61 @@ pub trait StreamFn: Send + Sync {
 }
 
 // ---------------------------------------------------------------------------
-// ProviderRegistry
+// ApiRegistry
 // ---------------------------------------------------------------------------
 
 /// Registry of [`StreamFn`] implementations keyed by API protocol name.
 ///
+/// This is an **API-protocol** registry, not a provider registry. The key is
+/// the API protocol (e.g., `"openai-completions"`, `"anthropic-messages"`),
+/// not the provider name. Multiple providers (OpenAI, ZAI, etc.) may share
+/// the same API protocol — they are all handled by a single registered
+/// [`StreamFn`] implementation, with provider-specific behavior configured
+/// per-model via [`Model::base_url`] and [`Model::compat`].
+///
 /// Uses interior mutability (`RwLock`) so callers can share a single instance
-/// by reference while still registering providers at runtime. Concurrent reads
+/// by reference while still registering at runtime. Concurrent reads
 /// (lookups during streaming) are not blocked by each other; only registration
 /// takes a write lock.
 ///
 /// # Examples
 ///
 /// ```
-/// use ameli_ai::provider::{ProviderRegistry, StreamFn};
+/// use ameli_ai::provider::{ApiRegistry, StreamFn};
 /// # use ameli_ai::types::{Model, Context, StreamOptions};
 /// # use ameli_ai::stream::AssistantMessageEventStream;
 ///
-/// let registry = ProviderRegistry::new();
-/// // registry.register("anthropic-messages", Box::new(MyProvider));
+/// let registry = ApiRegistry::new();
+/// // registry.register("openai-completions", Box::new(MyProvider));
 /// // ameli_ai::provider::stream_simple(&registry, &model, context, options);
 /// ```
-pub struct ProviderRegistry {
-    providers: RwLock<HashMap<String, Box<dyn StreamFn>>>,
+pub struct ApiRegistry {
+    apis: RwLock<HashMap<String, Box<dyn StreamFn>>>,
 }
 
-impl ProviderRegistry {
+impl ApiRegistry {
     /// Create an empty registry.
     pub fn new() -> Self {
         Self {
-            providers: RwLock::new(HashMap::new()),
+            apis: RwLock::new(HashMap::new()),
         }
     }
 
-    /// Register a streaming provider for an API protocol.
+    /// Register a streaming [`StreamFn`] for an API protocol.
     ///
-    /// Overwrites any previously registered provider for the same API name.
+    /// Overwrites any previously registered implementation for the same API name.
     pub fn register(&self, api: impl Into<String>, provider: Box<dyn StreamFn>) {
-        let mut providers = self.providers.write().unwrap_or_else(|e| e.into_inner());
-        providers.insert(api.into(), provider);
+        let mut apis = self.apis.write().unwrap_or_else(|e| e.into_inner());
+        apis.insert(api.into(), provider);
     }
 
-    /// Remove all registered providers.
+    /// Remove all registered API protocol implementations.
     pub fn clear(&self) {
-        let mut providers = self.providers.write().unwrap_or_else(|e| e.into_inner());
-        providers.clear();
+        let mut apis = self.apis.write().unwrap_or_else(|e| e.into_inner());
+        apis.clear();
     }
 
-    /// Look up the provider for an API protocol and dispatch a stream request.
+    /// Look up the [`StreamFn`] for an API protocol and dispatch a stream request.
     ///
     /// The read lock is held only long enough to call `provider.stream(...)`,
     /// which returns immediately per the [`StreamFn`] contract.
@@ -116,44 +128,44 @@ impl ProviderRegistry {
         context: Context,
         options: StreamOptions,
     ) -> Result<AssistantMessageEventStream, String> {
-        let providers = self.providers.read().unwrap_or_else(|e| e.into_inner());
-        match providers.get(&model.api) {
+        let apis = self.apis.read().unwrap_or_else(|e| e.into_inner());
+        match apis.get(&model.api) {
             Some(provider) => Ok(provider.stream(model, context, options)),
             None => Err(format!("no API provider registered for api: {}", model.api)),
         }
     }
 }
 
-impl Default for ProviderRegistry {
+impl Default for ApiRegistry {
     fn default() -> Self {
         Self::new()
     }
 }
 
 // ---------------------------------------------------------------------------
-// Global default registry
+// Global default API registry
 // ---------------------------------------------------------------------------
 
-/// Global default registry for convenience.
+/// Global default API registry for convenience.
 ///
 /// Use [`stream_simple_global`] or [`complete_simple_global`] to stream via
 /// this registry without passing it explicitly.
-pub static DEFAULT_REGISTRY: LazyLock<ProviderRegistry> = LazyLock::new(ProviderRegistry::new);
+pub static DEFAULT_API_REGISTRY: LazyLock<ApiRegistry> = LazyLock::new(ApiRegistry::new);
 
 // ---------------------------------------------------------------------------
 // Top-level entry points
 // ---------------------------------------------------------------------------
 
-/// Stream an LLM response by looking up the provider in the given registry.
+/// Stream an LLM response by looking up the [`StreamFn`] in the given API registry.
 ///
 /// # Errors
 ///
-/// If no provider is registered for `model.api`, returns a stream whose sole
+/// If no [`StreamFn`] is registered for `model.api`, returns a stream whose sole
 /// event is an [`Error`](AssistantMessageEvent::Error) with a descriptive
 /// message. This follows the StreamFn contract: failures are encoded in the
 /// stream, never thrown.
 pub fn stream_simple(
-    registry: &ProviderRegistry,
+    registry: &ApiRegistry,
     model: &Model,
     context: Context,
     options: StreamOptions,
@@ -173,7 +185,7 @@ pub fn stream_simple(
     }
 }
 
-/// Stream an LLM response using the [`DEFAULT_REGISTRY`].
+/// Stream an LLM response using the [`DEFAULT_API_REGISTRY`].
 ///
 /// Convenience wrapper around [`stream_simple`] for callers that don't need
 /// an explicit registry.
@@ -182,7 +194,7 @@ pub fn stream_simple_global(
     context: Context,
     options: StreamOptions,
 ) -> AssistantMessageEventStream {
-    stream_simple(&DEFAULT_REGISTRY, model, context, options)
+    stream_simple(&DEFAULT_API_REGISTRY, model, context, options)
 }
 
 /// Await a full LLM response by streaming and collecting the final message.
@@ -190,7 +202,7 @@ pub fn stream_simple_global(
 /// Convenience wrapper around [`stream_simple`] for callers that don't need
 /// incremental streaming events (e.g., compaction summarization).
 pub async fn complete_simple(
-    registry: &ProviderRegistry,
+    registry: &ApiRegistry,
     model: &Model,
     context: Context,
     options: StreamOptions,
@@ -198,7 +210,7 @@ pub async fn complete_simple(
     stream_simple(registry, model, context, options).result().await
 }
 
-/// Await a full LLM response using the [`DEFAULT_REGISTRY`].
+/// Await a full LLM response using the [`DEFAULT_API_REGISTRY`].
 ///
 /// Convenience wrapper around [`complete_simple`] for callers that don't need
 /// an explicit registry.
@@ -207,7 +219,7 @@ pub async fn complete_simple_global(
     context: Context,
     options: StreamOptions,
 ) -> AssistantMessage {
-    complete_simple(&DEFAULT_REGISTRY, model, context, options).await
+    complete_simple(&DEFAULT_API_REGISTRY, model, context, options).await
 }
 
 // ---------------------------------------------------------------------------
@@ -303,7 +315,7 @@ mod tests {
 
     #[test]
     fn registry_register_and_clear() {
-        let registry = ProviderRegistry::new();
+        let registry = ApiRegistry::new();
         registry.register("test-api", Box::new(ImmediateProvider));
         registry.clear();
         // Verify clearing works without panic
@@ -311,7 +323,7 @@ mod tests {
 
     #[tokio::test]
     async fn stream_simple_returns_error_for_unregistered_api() {
-        let registry = ProviderRegistry::new();
+        let registry = ApiRegistry::new();
         let model = test_model();
         let context = Context::default();
         let result = stream_simple(&registry, &model, context, StreamOptions::default())
@@ -324,7 +336,7 @@ mod tests {
 
     #[tokio::test]
     async fn stream_simple_delegates_to_registered_provider() {
-        let registry = ProviderRegistry::new();
+        let registry = ApiRegistry::new();
         registry.register("test-api", Box::new(ImmediateProvider));
 
         let model = test_model();
@@ -339,7 +351,7 @@ mod tests {
 
     #[tokio::test]
     async fn complete_simple_returns_final_message() {
-        let registry = ProviderRegistry::new();
+        let registry = ApiRegistry::new();
         registry.register("test-api", Box::new(ImmediateProvider));
 
         let model = test_model();
