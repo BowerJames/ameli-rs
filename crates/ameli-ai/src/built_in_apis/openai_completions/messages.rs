@@ -3,8 +3,8 @@
 //! Converts [`Context`] into OpenAI-compatible request parameters including
 //! message history, tool definitions, and streaming options.
 
-use crate::compat::{MaxTokensField, OpenAICompletionsCompat, ThinkingFormat};
-use ameli_ai::types::{
+use super::compat::{MaxTokensField, OpenAICompletionsCompat, ThinkingFormat};
+use crate::types::{
     AssistantContentBlock, Context, InputType, MediaContentBlock, Message, Model,
     ModelThinkingLevel, StopReason, StreamOptions, ThinkingContent, Tool, ToolCall,
     ToolResultMessage, UserContent,
@@ -135,7 +135,7 @@ fn convert_messages(context: &Context, model: &Model, supports_images: bool) -> 
 }
 
 /// Convert a user message.
-fn convert_user_message(msg: &ameli_ai::types::UserMessage, supports_images: bool) -> Value {
+fn convert_user_message(msg: &crate::types::UserMessage, supports_images: bool) -> Value {
     match &msg.content {
         UserContent::Text(text) => json!({
             "role": "user",
@@ -178,10 +178,7 @@ fn convert_user_message(msg: &ameli_ai::types::UserMessage, supports_images: boo
 
 /// Convert an assistant message. Returns `None` if the message has no
 /// content and no tool calls (empty/aborted responses are skipped).
-fn convert_assistant_message(
-    msg: &ameli_ai::types::AssistantMessage,
-    model: &Model,
-) -> Option<Value> {
+fn convert_assistant_message(msg: &crate::types::AssistantMessage, model: &Model) -> Option<Value> {
     let is_same_model =
         msg.provider == model.provider && msg.api == model.api && msg.model == model.id;
 
@@ -354,7 +351,7 @@ fn convert_tools(tools: &[Tool], compat: &OpenAICompletionsCompat) -> Vec<Value>
 
 /// Resolve the `reasoning_effort` value from the thinking level map or
 /// fall back to the level name.
-fn resolve_reasoning_effort(reasoning: &ameli_ai::types::ThinkingLevel, model: &Model) -> String {
+fn resolve_reasoning_effort(reasoning: &crate::types::ThinkingLevel, model: &Model) -> String {
     let model_level: ModelThinkingLevel = (*reasoning).into();
     model
         .thinking_level_map
@@ -366,13 +363,13 @@ fn resolve_reasoning_effort(reasoning: &ameli_ai::types::ThinkingLevel, model: &
 }
 
 /// Convert a [`ThinkingLevel`] to its lowercase string name.
-fn thinking_level_name(level: &ameli_ai::types::ThinkingLevel) -> String {
+fn thinking_level_name(level: &crate::types::ThinkingLevel) -> String {
     match level {
-        ameli_ai::types::ThinkingLevel::Minimal => "minimal",
-        ameli_ai::types::ThinkingLevel::Low => "low",
-        ameli_ai::types::ThinkingLevel::Medium => "medium",
-        ameli_ai::types::ThinkingLevel::High => "high",
-        ameli_ai::types::ThinkingLevel::XHigh => "xhigh",
+        crate::types::ThinkingLevel::Minimal => "minimal",
+        crate::types::ThinkingLevel::Low => "low",
+        crate::types::ThinkingLevel::Medium => "medium",
+        crate::types::ThinkingLevel::High => "high",
+        crate::types::ThinkingLevel::XHigh => "xhigh",
     }
     .to_string()
 }
@@ -384,7 +381,7 @@ fn thinking_level_name(level: &ameli_ai::types::ThinkingLevel) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ameli_ai::types::{Cost, InputType, TextContent};
+    use crate::types::{Cost, InputType, TextContent};
 
     fn test_model() -> Model {
         Model {
@@ -490,7 +487,7 @@ mod tests {
         let model = test_model_with_reasoning();
         let context = Context::default();
         let options = StreamOptions {
-            reasoning: Some(ameli_ai::types::ThinkingLevel::Medium),
+            reasoning: Some(crate::types::ThinkingLevel::Medium),
             ..Default::default()
         };
         let compat = OpenAICompletionsCompat {
@@ -509,7 +506,7 @@ mod tests {
         let model = test_model_with_reasoning();
         let context = Context::default();
         let options = StreamOptions {
-            reasoning: Some(ameli_ai::types::ThinkingLevel::High),
+            reasoning: Some(crate::types::ThinkingLevel::High),
             ..Default::default()
         };
         let compat = OpenAICompletionsCompat::default();
@@ -530,7 +527,7 @@ mod tests {
         };
         let context = Context::default();
         let options = StreamOptions {
-            reasoning: Some(ameli_ai::types::ThinkingLevel::High),
+            reasoning: Some(crate::types::ThinkingLevel::High),
             ..Default::default()
         };
         let compat = OpenAICompletionsCompat::default();
@@ -564,7 +561,7 @@ mod tests {
     fn convert_user_text_message() {
         let model = test_model();
         let context = Context {
-            messages: vec![Message::User(ameli_ai::types::UserMessage::text("hello"))],
+            messages: vec![Message::User(crate::types::UserMessage::text("hello"))],
             ..Default::default()
         };
         let params = convert_messages(&context, &model, true);
@@ -575,7 +572,7 @@ mod tests {
     #[test]
     fn convert_assistant_with_tool_calls() {
         let model = test_model();
-        let assistant = ameli_ai::types::AssistantMessage {
+        let assistant = crate::types::AssistantMessage {
             content: vec![
                 AssistantContentBlock::Text(TextContent::new("Let me help.")),
                 AssistantContentBlock::ToolCall(ToolCall {
@@ -590,7 +587,7 @@ mod tests {
             model: "gpt-4o".into(),
             response_model: None,
             response_id: None,
-            usage: ameli_ai::types::Usage::default(),
+            usage: crate::types::Usage::default(),
             stop_reason: StopReason::ToolUse,
             error_message: None,
             timestamp: 1000,
@@ -609,15 +606,15 @@ mod tests {
         let model = test_model();
         let context = Context {
             messages: vec![
-                Message::User(ameli_ai::types::UserMessage::text("hello")),
-                Message::Assistant(ameli_ai::types::AssistantMessage {
+                Message::User(crate::types::UserMessage::text("hello")),
+                Message::Assistant(crate::types::AssistantMessage {
                     content: vec![],
                     api: "openai-completions".into(),
                     provider: "openai".into(),
                     model: "gpt-4o".into(),
                     response_model: None,
                     response_id: None,
-                    usage: ameli_ai::types::Usage::default(),
+                    usage: crate::types::Usage::default(),
                     stop_reason: StopReason::Error,
                     error_message: Some("failed".into()),
                     timestamp: 1000,

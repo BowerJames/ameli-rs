@@ -5,7 +5,7 @@
 //! deserialized from the [`Model::compat`](ameli_ai::types::Model::compat)
 //! JSON field with sensible defaults for standard OpenAI.
 
-use ameli_ai::types::Model;
+use crate::types::Model;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------

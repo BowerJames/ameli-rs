@@ -150,7 +150,11 @@ impl Default for ApiRegistry {
 ///
 /// Use [`stream_simple_global`] or [`complete_simple_global`] to stream via
 /// this registry without passing it explicitly.
-pub static DEFAULT_API_REGISTRY: LazyLock<ApiRegistry> = LazyLock::new(ApiRegistry::new);
+pub static DEFAULT_API_REGISTRY: LazyLock<ApiRegistry> = LazyLock::new(|| {
+    let registry = ApiRegistry::new();
+    crate::built_in_apis::openai_completions::register(&registry);
+    registry
+});
 
 // ---------------------------------------------------------------------------
 // Top-level entry points
