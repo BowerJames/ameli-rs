@@ -72,6 +72,14 @@ impl CustomAgentMessage for ExtensionCustomMessage {
 /// - Branch summaries: converted to custom agent messages
 /// - Custom messages: converted to custom agent messages
 ///
+/// # Compaction assumption
+///
+/// When a [`CompactionEntry`] is present, its `first_kept_entry_id` is assumed to
+/// reference an entry that exists on the active branch path (i.e., appears among the
+/// entries preceding the compaction). If it does not — which would indicate a bug
+/// in the compaction implementation — all pre-compaction messages are silently
+/// dropped and only the compaction summary and post-compaction messages are emitted.
+///
 /// # Panics
 ///
 /// Does not panic. Returns a default context for empty paths.
