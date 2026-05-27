@@ -6,14 +6,12 @@
 //!
 //! # Session Management
 //!
-//! The session system is built around three core abstractions:
+//! The session system is built around two core abstractions:
 //!
 //! - [`SessionMetadata`] — trait for session identity (ID, creation time).
 //!   Different backends extend this with their own fields.
-//! - [`SessionStorage`] — async trait for the storage backend (in-memory,
-//!   JSONL file, database, etc.).
-//! - [`Session`] — high-level API that wraps a storage backend and provides
-//!   typed methods for appending entries and building context.
+//! - [`SessionManager`] — trait for session operations. Implementations
+//!   decide their own ID generation, persistence strategy, and internals.
 //!
 //! # Session Tree
 //!
@@ -21,6 +19,16 @@
 //! an `id` and `parent_id` forming the tree. The active "leaf" tracks the
 //! current position. Branching moves the leaf to an earlier entry, allowing
 //! new branches without modifying history.
+//!
+//! # Session Messages
+//!
+//! [`SessionMessage`] preserves type identity through context building.
+//! Compaction and branch summary entries are **not** converted to
+//! [`AgentMessage`] during context building — instead they become
+//! [`SessionMessage::Compaction`] and [`SessionMessage::BranchSummary`]
+//! variants. The future `AgentSession` converts these to `AgentMessage`,
+//! consulting extension formatting hooks, guaranteeing that extensions
+//! can customize how summaries appear in LLM context.
 //!
 //! # Entry Types
 //!
@@ -36,17 +44,15 @@
 
 pub mod error;
 pub mod extension;
-pub mod session;
-pub mod storage;
+pub mod session_manager;
 pub mod types;
 
 // Re-export primary types for convenience.
 pub use error::SessionError;
 pub use extension::{Extension, ExtensionApi, ExtensionContext};
-pub use session::{BranchSummaryData, Session};
-pub use storage::{SessionMetadata, SessionStorage};
+pub use session_manager::{BranchSummaryData, SessionManager, SessionMetadata};
 pub use types::{
     BranchSummaryEntry, CompactionEntry, CustomEntry, CustomMessageContent, CustomMessageEntry,
-    MessageEntry, ModelChangeEntry, ModelRef, SessionContext, SessionEntry,
+    MessageEntry, ModelChangeEntry, ModelRef, SessionContext, SessionEntry, SessionMessage,
     ThinkingLevelChangeEntry,
 };

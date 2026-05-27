@@ -2,7 +2,8 @@
 //!
 //! Defines the data model for the session tree: the seven entry variants that
 //! make up a session's append-only history, the [`SessionEntry`] tagged enum,
-//! and the [`SessionContext`] produced by walking the tree.
+//! the [`SessionMessage`] enum that preserves type identity through context
+//! building, and the [`SessionContext`] produced by walking the tree.
 
 use ameli_agent_core::types::AgentMessage;
 use ameli_ai::types::MediaContentBlock;
@@ -21,14 +22,49 @@ pub struct ModelRef {
     pub model_id: String,
 }
 
+/// A message in the session context, preserving type identity.
+///
+/// `SessionManager` implementations produce `Vec<SessionMessage>` from the
+/// session tree. The future `AgentSession` converts these to
+/// `Vec<AgentMessage>`, consulting extension formatting hooks for
+/// [`Compaction`](SessionMessage::Compaction) and
+/// [`BranchSummary`](SessionMessage::BranchSummary) variants.
+///
+/// Because `Compaction` and `BranchSummary` are distinct variants that must
+/// be explicitly handled to produce `AgentMessage`, extension hooks are
+/// guaranteed to be consulted — no implementation can bypass them.
+#[derive(Debug, Clone)]
+pub enum SessionMessage {
+    /// A standard agent message (user, assistant, tool result, or custom).
+    Agent(Box<AgentMessage>),
+    /// A compaction summary — raw data preserved for later formatting.
+    ///
+    /// The future `AgentSession` will consult
+    /// `on_format_compaction_summary` extension hooks before converting
+    /// to an `AgentMessage`. If no extension overrides the formatting,
+    /// the default conversion wraps the summary in a user message.
+    Compaction { summary: String, timestamp: u64 },
+    /// A branch summary — raw data preserved for later formatting.
+    ///
+    /// The future `AgentSession` will consult
+    /// `on_format_branch_summary` extension hooks before converting
+    /// to an `AgentMessage`. If no extension overrides the formatting,
+    /// the default conversion wraps the summary in a user message.
+    BranchSummary { summary: String, timestamp: u64 },
+}
+
 /// The resolved session context produced by walking the session tree.
 ///
-/// Contains the messages to send to the LLM, the current thinking level,
-/// and the model selection — all reconstructed from the entry history.
+/// Contains the messages (as [`SessionMessage`] to preserve type identity),
+/// the current thinking level, and the model selection — all reconstructed
+/// from the entry history.
 #[derive(Debug, Clone)]
 pub struct SessionContext {
-    /// Messages in conversation order, ready for the LLM.
-    pub messages: Vec<AgentMessage>,
+    /// Messages in conversation order, preserving type identity.
+    ///
+    /// Use the future `AgentSession` to convert to `Vec<AgentMessage>`
+    /// with extension formatting hooks applied.
+    pub messages: Vec<SessionMessage>,
     /// Current thinking/reasoning level.
     pub thinking_level: String,
     /// Current model selection, if any has been recorded.
