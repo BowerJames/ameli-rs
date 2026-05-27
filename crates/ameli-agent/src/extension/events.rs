@@ -177,6 +177,54 @@ pub struct ContextResult {
 }
 
 // ---------------------------------------------------------------------------
+// Summary formatting hooks
+// ---------------------------------------------------------------------------
+
+/// Emitted when a compaction summary needs formatting into an [`AgentMessage`].
+///
+/// Handlers return `Some` to replace the default formatting. If no handler
+/// returns `Some`, the default conversion wraps the summary in a synthetic
+/// user message.
+#[derive(Debug, Clone)]
+pub struct FormatCompactionSummaryEvent {
+    /// The compaction summary text.
+    pub summary: String,
+    /// Unix timestamp in milliseconds.
+    pub timestamp: u64,
+}
+
+/// Result from a compaction summary formatting hook.
+///
+/// Return `Some(...)` to replace the default conversion; return `None` to
+/// use the default.
+pub struct FormatCompactionSummaryResult {
+    /// Replacement agent message for the compaction summary.
+    pub message: AgentMessage,
+}
+
+/// Emitted when a branch summary needs formatting into an [`AgentMessage`].
+///
+/// Handlers return `Some` to replace the default formatting. If no handler
+/// returns `Some`, the default conversion wraps the summary in a synthetic
+/// user message.
+#[derive(Debug, Clone)]
+pub struct FormatBranchSummaryEvent {
+    /// The branch summary text.
+    pub summary: String,
+    /// Unix timestamp in milliseconds.
+    pub timestamp: u64,
+}
+
+/// Result from a branch summary formatting hook.
+///
+/// Return `Some(...)` to replace the default conversion; return `None` to
+/// use the default.
+pub struct FormatBranchSummaryResult {
+    /// Replacement agent message for the branch summary.
+    pub message: AgentMessage,
+}
+
+// ---------------------------------------------------------------------------
 // Enum for internal dispatch
 // ---------------------------------------------------------------------------
 
@@ -201,6 +249,8 @@ pub enum ExtensionEvent {
     ToolCall(ToolCallEvent),
     ToolResult(ToolResultEvent),
     Context(ContextEvent),
+    FormatCompactionSummary(FormatCompactionSummaryEvent),
+    FormatBranchSummary(FormatBranchSummaryEvent),
 }
 
 impl fmt::Display for ExtensionEvent {
@@ -218,6 +268,8 @@ impl fmt::Display for ExtensionEvent {
             Self::ToolCall(_) => write!(f, "tool_call"),
             Self::ToolResult(_) => write!(f, "tool_result"),
             Self::Context(_) => write!(f, "context"),
+            Self::FormatCompactionSummary(_) => write!(f, "format_compaction_summary"),
+            Self::FormatBranchSummary(_) => write!(f, "format_branch_summary"),
         }
     }
 }

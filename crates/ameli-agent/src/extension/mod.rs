@@ -84,6 +84,22 @@ type ToolResultHandler = Box<
 >;
 type ContextHandler =
     Box<dyn Fn(ContextEvent, ExtensionContext) -> BoxFuture<Option<ContextResult>> + Send + Sync>;
+type FormatCompactionSummaryHandler = Box<
+    dyn Fn(
+            FormatCompactionSummaryEvent,
+            ExtensionContext,
+        ) -> BoxFuture<Option<FormatCompactionSummaryResult>>
+        + Send
+        + Sync,
+>;
+type FormatBranchSummaryHandler = Box<
+    dyn Fn(
+            FormatBranchSummaryEvent,
+            ExtensionContext,
+        ) -> BoxFuture<Option<FormatBranchSummaryResult>>
+        + Send
+        + Sync,
+>;
 
 // ---------------------------------------------------------------------------
 // Extension trait
@@ -156,6 +172,8 @@ pub struct ExtensionApi {
     tool_call_handlers: Vec<ToolCallHandler>,
     tool_result_handlers: Vec<ToolResultHandler>,
     context_handlers: Vec<ContextHandler>,
+    format_compaction_summary_handlers: Vec<FormatCompactionSummaryHandler>,
+    format_branch_summary_handlers: Vec<FormatBranchSummaryHandler>,
 
     // Registered tools
     tools: Vec<Arc<dyn AgentTool>>,
@@ -177,6 +195,8 @@ impl ExtensionApi {
             tool_call_handlers: Vec::new(),
             tool_result_handlers: Vec::new(),
             context_handlers: Vec::new(),
+            format_compaction_summary_handlers: Vec::new(),
+            format_branch_summary_handlers: Vec::new(),
             tools: Vec::new(),
         }
     }
@@ -311,6 +331,45 @@ impl ExtensionApi {
         self.context_handlers.push(Box::new(handler));
     }
 
+    /// Register a hook called when a compaction summary needs formatting into
+    /// an [`AgentMessage`].
+    ///
+    /// Handlers run in registration order. The first handler to return
+    /// `Some(...)` wins. If no handler returns `Some`, the default
+    /// conversion wraps the summary in a synthetic user message.
+    pub fn on_format_compaction_summary(
+        &mut self,
+        handler: impl Fn(
+                FormatCompactionSummaryEvent,
+                ExtensionContext,
+            ) -> BoxFuture<Option<FormatCompactionSummaryResult>>
+            + Send
+            + Sync
+            + 'static,
+    ) {
+        self.format_compaction_summary_handlers
+            .push(Box::new(handler));
+    }
+
+    /// Register a hook called when a branch summary needs formatting into
+    /// an [`AgentMessage`].
+    ///
+    /// Handlers run in registration order. The first handler to return
+    /// `Some(...)` wins. If no handler returns `Some`, the default
+    /// conversion wraps the summary in a synthetic user message.
+    pub fn on_format_branch_summary(
+        &mut self,
+        handler: impl Fn(
+                FormatBranchSummaryEvent,
+                ExtensionContext,
+            ) -> BoxFuture<Option<FormatBranchSummaryResult>>
+            + Send
+            + Sync
+            + 'static,
+    ) {
+        self.format_branch_summary_handlers.push(Box::new(handler));
+    }
+
     // -----------------------------------------------------------------------
     // Tool registration
     // -----------------------------------------------------------------------
@@ -346,6 +405,8 @@ impl ExtensionApi {
             tool_call_handlers: self.tool_call_handlers,
             tool_result_handlers: self.tool_result_handlers,
             context_handlers: self.context_handlers,
+            format_compaction_summary_handlers: self.format_compaction_summary_handlers,
+            format_branch_summary_handlers: self.format_branch_summary_handlers,
             tools: self.tools,
         }
     }
@@ -378,6 +439,14 @@ impl fmt::Debug for ExtensionApi {
             .field("on_tool_call", &self.tool_call_handlers.len())
             .field("on_tool_result", &self.tool_result_handlers.len())
             .field("on_context", &self.context_handlers.len())
+            .field(
+                "on_format_compaction_summary",
+                &self.format_compaction_summary_handlers.len(),
+            )
+            .field(
+                "on_format_branch_summary",
+                &self.format_branch_summary_handlers.len(),
+            )
             .field("tools", &self.tools.len())
             .finish()
     }
@@ -407,6 +476,8 @@ pub struct ExtensionHandlers {
     pub tool_call_handlers: Vec<ToolCallHandler>,
     pub tool_result_handlers: Vec<ToolResultHandler>,
     pub context_handlers: Vec<ContextHandler>,
+    pub format_compaction_summary_handlers: Vec<FormatCompactionSummaryHandler>,
+    pub format_branch_summary_handlers: Vec<FormatBranchSummaryHandler>,
 
     // Tools
     pub tools: Vec<Arc<dyn AgentTool>>,
@@ -427,6 +498,8 @@ impl ExtensionHandlers {
             && self.tool_call_handlers.is_empty()
             && self.tool_result_handlers.is_empty()
             && self.context_handlers.is_empty()
+            && self.format_compaction_summary_handlers.is_empty()
+            && self.format_branch_summary_handlers.is_empty()
             && self.tools.is_empty()
     }
 }
@@ -452,6 +525,14 @@ impl fmt::Debug for ExtensionHandlers {
             .field("on_tool_call", &self.tool_call_handlers.len())
             .field("on_tool_result", &self.tool_result_handlers.len())
             .field("on_context", &self.context_handlers.len())
+            .field(
+                "on_format_compaction_summary",
+                &self.format_compaction_summary_handlers.len(),
+            )
+            .field(
+                "on_format_branch_summary",
+                &self.format_branch_summary_handlers.len(),
+            )
             .field("tools", &self.tools.len())
             .finish()
     }
