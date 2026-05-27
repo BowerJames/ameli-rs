@@ -24,10 +24,10 @@ pub struct ModelRef {
 
 /// A message in the session context, preserving type identity.
 ///
-/// [`AgentSession`](crate::SessionManager) implementations produce
-/// `Vec<SessionMessage>` from the session tree. The future `AgentSession`
-/// converts these to `Vec<AgentMessage>`, consulting extension formatting
-/// hooks for [`Compaction`](SessionMessage::Compaction) and
+/// `SessionManager` implementations produce `Vec<SessionMessage>` from the
+/// session tree. The future `AgentSession` converts these to
+/// `Vec<AgentMessage>`, consulting extension formatting hooks for
+/// [`Compaction`](SessionMessage::Compaction) and
 /// [`BranchSummary`](SessionMessage::BranchSummary) variants.
 ///
 /// Because `Compaction` and `BranchSummary` are distinct variants that must
