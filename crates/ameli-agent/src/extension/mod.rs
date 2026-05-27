@@ -11,11 +11,8 @@
 //!                            ↓
 //! ExtensionApi        →  api.on_tool_call(handler), api.register_tool(tool)
 //!                            ↓
-//! ExtensionRunner     →  (future) wires handlers to ArcAgent + AgentLoopConfig
+//! ExtensionRunner     →  wires handlers to ArcAgent + AgentLoopConfig
 //! ```
-//!
-//! The first pass provides type definitions only. The `ExtensionRunner` that
-//! bridges to `ameli-agent-core` will be implemented in a subsequent step.
 //!
 //! # Extension lifecycle
 //!
@@ -41,9 +38,11 @@
 
 pub mod context;
 pub mod events;
+pub mod runner;
 
 pub use context::ExtensionContext;
 pub use events::*;
+pub use runner::{ExtensionError, ExtensionRunner, ExtensionWiring};
 
 use ameli_agent_core::types::AgentTool;
 use std::fmt;
@@ -59,22 +58,32 @@ use std::sync::Arc;
 type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
 // Handler function types for notification events.
+//
+// Notification handlers return `anyhow::Result<()>` so errors can be
+// captured by the runner and reported to registered error listeners.
 type AgentStartHandler =
-    Box<dyn Fn(AgentStartEvent, ExtensionContext) -> BoxFuture<()> + Send + Sync>;
-type AgentEndHandler = Box<dyn Fn(AgentEndEvent, ExtensionContext) -> BoxFuture<()> + Send + Sync>;
+    Box<dyn Fn(AgentStartEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>> + Send + Sync>;
+type AgentEndHandler =
+    Box<dyn Fn(AgentEndEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>> + Send + Sync>;
 type TurnStartHandler =
-    Box<dyn Fn(TurnStartEvent, ExtensionContext) -> BoxFuture<()> + Send + Sync>;
-type TurnEndHandler = Box<dyn Fn(TurnEndEvent, ExtensionContext) -> BoxFuture<()> + Send + Sync>;
+    Box<dyn Fn(TurnStartEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>> + Send + Sync>;
+type TurnEndHandler =
+    Box<dyn Fn(TurnEndEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>> + Send + Sync>;
 type MessageStartHandler =
-    Box<dyn Fn(MessageStartEvent, ExtensionContext) -> BoxFuture<()> + Send + Sync>;
-type MessageUpdateHandler =
-    Box<dyn Fn(MessageUpdateEvent, ExtensionContext) -> BoxFuture<()> + Send + Sync>;
+    Box<dyn Fn(MessageStartEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>> + Send + Sync>;
+type MessageUpdateHandler = Box<
+    dyn Fn(MessageUpdateEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>> + Send + Sync,
+>;
 type MessageEndHandler =
-    Box<dyn Fn(MessageEndEvent, ExtensionContext) -> BoxFuture<()> + Send + Sync>;
-type ToolExecutionStartHandler =
-    Box<dyn Fn(ToolExecutionStartEvent, ExtensionContext) -> BoxFuture<()> + Send + Sync>;
-type ToolExecutionEndHandler =
-    Box<dyn Fn(ToolExecutionEndEvent, ExtensionContext) -> BoxFuture<()> + Send + Sync>;
+    Box<dyn Fn(MessageEndEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>> + Send + Sync>;
+type ToolExecutionStartHandler = Box<
+    dyn Fn(ToolExecutionStartEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>>
+        + Send
+        + Sync,
+>;
+type ToolExecutionEndHandler = Box<
+    dyn Fn(ToolExecutionEndEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>> + Send + Sync,
+>;
 
 // Handler function types for hook events.
 type ToolCallHandler =
@@ -102,6 +111,25 @@ type FormatBranchSummaryHandler = Box<
 >;
 
 // ---------------------------------------------------------------------------
+// Named handler wrappers
+// ---------------------------------------------------------------------------
+
+/// Wraps a handler with its registering extension's name for error attribution.
+pub(crate) struct Named<H> {
+    pub(crate) extension_name: String,
+    pub(crate) handler: H,
+}
+
+impl<H> Named<H> {
+    fn new(extension_name: String, handler: H) -> Self {
+        Self {
+            extension_name,
+            handler,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Extension trait
 // ---------------------------------------------------------------------------
 
@@ -125,6 +153,7 @@ type FormatBranchSummaryHandler = Box<
 ///         api.on_agent_start(|_event, _ctx| {
 ///             Box::pin(async move {
 ///                 println!("Agent started");
+///                 Ok(())
 ///             })
 ///         });
 ///     }
@@ -147,33 +176,38 @@ pub trait Extension: Send + Sync {
 /// Registration surface passed to extensions during [`Extension::init`].
 ///
 /// Extensions call typed `on_xxx()` methods to subscribe to events and
-/// `register_tool()` to add LLM-callable tools. The future
-/// `ExtensionRunner` extracts these registrations and wires them to the
+/// `register_tool()` to add LLM-callable tools. The
+/// [`ExtensionRunner`] extracts these registrations and wires them to the
 /// agent loop.
 ///
 /// # Handler contract
 ///
-/// Handlers must not panic. If a handler fails, it should return a safe
-/// fallback value (e.g., `None` for hooks, or simply return for
-/// notifications). The runtime logs handler errors and continues.
+/// Handlers must not panic. Notification handlers return `anyhow::Result<()>`;
+/// errors are reported to registered error listeners and do not stop dispatch
+/// to subsequent handlers. Hook handlers return `Option<ResultType>` — return
+/// `None` to allow default behavior.
 pub struct ExtensionApi {
+    /// Name of the extension currently being initialized. Set by
+    /// [`init_extensions`] before calling each extension's `init`.
+    current_extension_name: String,
+
     // Notification handlers
-    agent_start_handlers: Vec<AgentStartHandler>,
-    agent_end_handlers: Vec<AgentEndHandler>,
-    turn_start_handlers: Vec<TurnStartHandler>,
-    turn_end_handlers: Vec<TurnEndHandler>,
-    message_start_handlers: Vec<MessageStartHandler>,
-    message_update_handlers: Vec<MessageUpdateHandler>,
-    message_end_handlers: Vec<MessageEndHandler>,
-    tool_execution_start_handlers: Vec<ToolExecutionStartHandler>,
-    tool_execution_end_handlers: Vec<ToolExecutionEndHandler>,
+    agent_start_handlers: Vec<Named<AgentStartHandler>>,
+    agent_end_handlers: Vec<Named<AgentEndHandler>>,
+    turn_start_handlers: Vec<Named<TurnStartHandler>>,
+    turn_end_handlers: Vec<Named<TurnEndHandler>>,
+    message_start_handlers: Vec<Named<MessageStartHandler>>,
+    message_update_handlers: Vec<Named<MessageUpdateHandler>>,
+    message_end_handlers: Vec<Named<MessageEndHandler>>,
+    tool_execution_start_handlers: Vec<Named<ToolExecutionStartHandler>>,
+    tool_execution_end_handlers: Vec<Named<ToolExecutionEndHandler>>,
 
     // Hook handlers
-    tool_call_handlers: Vec<ToolCallHandler>,
-    tool_result_handlers: Vec<ToolResultHandler>,
-    context_handlers: Vec<ContextHandler>,
-    format_compaction_summary_handlers: Vec<FormatCompactionSummaryHandler>,
-    format_branch_summary_handlers: Vec<FormatBranchSummaryHandler>,
+    tool_call_handlers: Vec<Named<ToolCallHandler>>,
+    tool_result_handlers: Vec<Named<ToolResultHandler>>,
+    context_handlers: Vec<Named<ContextHandler>>,
+    format_compaction_summary_handlers: Vec<Named<FormatCompactionSummaryHandler>>,
+    format_branch_summary_handlers: Vec<Named<FormatBranchSummaryHandler>>,
 
     // Registered tools
     tools: Vec<Arc<dyn AgentTool>>,
@@ -183,6 +217,7 @@ impl ExtensionApi {
     /// Create a new, empty API surface.
     pub fn new() -> Self {
         Self {
+            current_extension_name: String::new(),
             agent_start_handlers: Vec::new(),
             agent_end_handlers: Vec::new(),
             turn_start_handlers: Vec::new(),
@@ -208,79 +243,127 @@ impl ExtensionApi {
     /// Subscribe to agent loop start.
     pub fn on_agent_start(
         &mut self,
-        handler: impl Fn(AgentStartEvent, ExtensionContext) -> BoxFuture<()> + Send + Sync + 'static,
+        handler: impl Fn(AgentStartEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>>
+            + Send
+            + Sync
+            + 'static,
     ) {
-        self.agent_start_handlers.push(Box::new(handler));
+        self.agent_start_handlers.push(Named::new(
+            self.current_extension_name.clone(),
+            Box::new(handler),
+        ));
     }
 
     /// Subscribe to agent loop end.
     pub fn on_agent_end(
         &mut self,
-        handler: impl Fn(AgentEndEvent, ExtensionContext) -> BoxFuture<()> + Send + Sync + 'static,
+        handler: impl Fn(AgentEndEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>>
+            + Send
+            + Sync
+            + 'static,
     ) {
-        self.agent_end_handlers.push(Box::new(handler));
+        self.agent_end_handlers.push(Named::new(
+            self.current_extension_name.clone(),
+            Box::new(handler),
+        ));
     }
 
     /// Subscribe to turn start.
     pub fn on_turn_start(
         &mut self,
-        handler: impl Fn(TurnStartEvent, ExtensionContext) -> BoxFuture<()> + Send + Sync + 'static,
+        handler: impl Fn(TurnStartEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>>
+            + Send
+            + Sync
+            + 'static,
     ) {
-        self.turn_start_handlers.push(Box::new(handler));
+        self.turn_start_handlers.push(Named::new(
+            self.current_extension_name.clone(),
+            Box::new(handler),
+        ));
     }
 
     /// Subscribe to turn end.
     pub fn on_turn_end(
         &mut self,
-        handler: impl Fn(TurnEndEvent, ExtensionContext) -> BoxFuture<()> + Send + Sync + 'static,
+        handler: impl Fn(TurnEndEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>>
+            + Send
+            + Sync
+            + 'static,
     ) {
-        self.turn_end_handlers.push(Box::new(handler));
+        self.turn_end_handlers.push(Named::new(
+            self.current_extension_name.clone(),
+            Box::new(handler),
+        ));
     }
 
     /// Subscribe to message start (user, assistant, or tool result).
     pub fn on_message_start(
         &mut self,
-        handler: impl Fn(MessageStartEvent, ExtensionContext) -> BoxFuture<()> + Send + Sync + 'static,
+        handler: impl Fn(MessageStartEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>>
+            + Send
+            + Sync
+            + 'static,
     ) {
-        self.message_start_handlers.push(Box::new(handler));
+        self.message_start_handlers.push(Named::new(
+            self.current_extension_name.clone(),
+            Box::new(handler),
+        ));
     }
 
     /// Subscribe to message streaming updates (assistant messages only).
     pub fn on_message_update(
         &mut self,
-        handler: impl Fn(MessageUpdateEvent, ExtensionContext) -> BoxFuture<()> + Send + Sync + 'static,
+        handler: impl Fn(MessageUpdateEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>>
+            + Send
+            + Sync
+            + 'static,
     ) {
-        self.message_update_handlers.push(Box::new(handler));
+        self.message_update_handlers.push(Named::new(
+            self.current_extension_name.clone(),
+            Box::new(handler),
+        ));
     }
 
     /// Subscribe to message end (user, assistant, or tool result).
     pub fn on_message_end(
         &mut self,
-        handler: impl Fn(MessageEndEvent, ExtensionContext) -> BoxFuture<()> + Send + Sync + 'static,
+        handler: impl Fn(MessageEndEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>>
+            + Send
+            + Sync
+            + 'static,
     ) {
-        self.message_end_handlers.push(Box::new(handler));
+        self.message_end_handlers.push(Named::new(
+            self.current_extension_name.clone(),
+            Box::new(handler),
+        ));
     }
 
     /// Subscribe to tool execution start.
     pub fn on_tool_execution_start(
         &mut self,
-        handler: impl Fn(ToolExecutionStartEvent, ExtensionContext) -> BoxFuture<()>
+        handler: impl Fn(ToolExecutionStartEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>>
             + Send
             + Sync
             + 'static,
     ) {
-        self.tool_execution_start_handlers.push(Box::new(handler));
+        self.tool_execution_start_handlers.push(Named::new(
+            self.current_extension_name.clone(),
+            Box::new(handler),
+        ));
     }
 
     /// Subscribe to tool execution end.
     pub fn on_tool_execution_end(
         &mut self,
-        handler: impl Fn(ToolExecutionEndEvent, ExtensionContext) -> BoxFuture<()>
+        handler: impl Fn(ToolExecutionEndEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>>
             + Send
             + Sync
             + 'static,
     ) {
-        self.tool_execution_end_handlers.push(Box::new(handler));
+        self.tool_execution_end_handlers.push(Named::new(
+            self.current_extension_name.clone(),
+            Box::new(handler),
+        ));
     }
 
     // -----------------------------------------------------------------------
@@ -298,7 +381,10 @@ impl ExtensionApi {
             + Sync
             + 'static,
     ) {
-        self.tool_call_handlers.push(Box::new(handler));
+        self.tool_call_handlers.push(Named::new(
+            self.current_extension_name.clone(),
+            Box::new(handler),
+        ));
     }
 
     /// Register a hook called after a tool finishes executing.
@@ -313,7 +399,10 @@ impl ExtensionApi {
             + Sync
             + 'static,
     ) {
-        self.tool_result_handlers.push(Box::new(handler));
+        self.tool_result_handlers.push(Named::new(
+            self.current_extension_name.clone(),
+            Box::new(handler),
+        ));
     }
 
     /// Register a hook called before each LLM call to modify the context.
@@ -328,7 +417,10 @@ impl ExtensionApi {
             + Sync
             + 'static,
     ) {
-        self.context_handlers.push(Box::new(handler));
+        self.context_handlers.push(Named::new(
+            self.current_extension_name.clone(),
+            Box::new(handler),
+        ));
     }
 
     /// Register a hook called when a compaction summary needs formatting into
@@ -347,8 +439,10 @@ impl ExtensionApi {
             + Sync
             + 'static,
     ) {
-        self.format_compaction_summary_handlers
-            .push(Box::new(handler));
+        self.format_compaction_summary_handlers.push(Named::new(
+            self.current_extension_name.clone(),
+            Box::new(handler),
+        ));
     }
 
     /// Register a hook called when a branch summary needs formatting into
@@ -367,7 +461,10 @@ impl ExtensionApi {
             + Sync
             + 'static,
     ) {
-        self.format_branch_summary_handlers.push(Box::new(handler));
+        self.format_branch_summary_handlers.push(Named::new(
+            self.current_extension_name.clone(),
+            Box::new(handler),
+        ));
     }
 
     // -----------------------------------------------------------------------
@@ -382,7 +479,7 @@ impl ExtensionApi {
     }
 
     // -----------------------------------------------------------------------
-    // Extraction (used by the future ExtensionRunner)
+    // Extraction (used by the ExtensionRunner)
     // -----------------------------------------------------------------------
 
     /// Take all registered handlers and tools, leaving empty vectors.
@@ -458,29 +555,29 @@ impl fmt::Debug for ExtensionApi {
 
 /// All handlers and tools extracted from extensions after initialization.
 ///
-/// The `ExtensionRunner` will consume this to wire handlers into the agent
+/// The `ExtensionRunner` consumes this to wire handlers into the agent
 /// loop. Produced by [`ExtensionApi::into_handlers`].
 pub struct ExtensionHandlers {
     // Notification
-    pub agent_start_handlers: Vec<AgentStartHandler>,
-    pub agent_end_handlers: Vec<AgentEndHandler>,
-    pub turn_start_handlers: Vec<TurnStartHandler>,
-    pub turn_end_handlers: Vec<TurnEndHandler>,
-    pub message_start_handlers: Vec<MessageStartHandler>,
-    pub message_update_handlers: Vec<MessageUpdateHandler>,
-    pub message_end_handlers: Vec<MessageEndHandler>,
-    pub tool_execution_start_handlers: Vec<ToolExecutionStartHandler>,
-    pub tool_execution_end_handlers: Vec<ToolExecutionEndHandler>,
+    pub(crate) agent_start_handlers: Vec<Named<AgentStartHandler>>,
+    pub(crate) agent_end_handlers: Vec<Named<AgentEndHandler>>,
+    pub(crate) turn_start_handlers: Vec<Named<TurnStartHandler>>,
+    pub(crate) turn_end_handlers: Vec<Named<TurnEndHandler>>,
+    pub(crate) message_start_handlers: Vec<Named<MessageStartHandler>>,
+    pub(crate) message_update_handlers: Vec<Named<MessageUpdateHandler>>,
+    pub(crate) message_end_handlers: Vec<Named<MessageEndHandler>>,
+    pub(crate) tool_execution_start_handlers: Vec<Named<ToolExecutionStartHandler>>,
+    pub(crate) tool_execution_end_handlers: Vec<Named<ToolExecutionEndHandler>>,
 
     // Hooks
-    pub tool_call_handlers: Vec<ToolCallHandler>,
-    pub tool_result_handlers: Vec<ToolResultHandler>,
-    pub context_handlers: Vec<ContextHandler>,
-    pub format_compaction_summary_handlers: Vec<FormatCompactionSummaryHandler>,
-    pub format_branch_summary_handlers: Vec<FormatBranchSummaryHandler>,
+    pub(crate) tool_call_handlers: Vec<Named<ToolCallHandler>>,
+    pub(crate) tool_result_handlers: Vec<Named<ToolResultHandler>>,
+    pub(crate) context_handlers: Vec<Named<ContextHandler>>,
+    pub(crate) format_compaction_summary_handlers: Vec<Named<FormatCompactionSummaryHandler>>,
+    pub(crate) format_branch_summary_handlers: Vec<Named<FormatBranchSummaryHandler>>,
 
     // Tools
-    pub tools: Vec<Arc<dyn AgentTool>>,
+    pub(crate) tools: Vec<Arc<dyn AgentTool>>,
 }
 
 impl ExtensionHandlers {
@@ -564,6 +661,7 @@ impl fmt::Debug for ExtensionHandlers {
 pub fn init_extensions(extensions: &[Box<dyn Extension>]) -> ExtensionHandlers {
     let mut api = ExtensionApi::new();
     for ext in extensions {
+        api.current_extension_name = ext.name().to_string();
         ext.init(&mut api);
     }
     api.into_handlers()
@@ -612,11 +710,13 @@ mod tests {
             api.on_agent_start(|_event, _ctx| {
                 Box::pin(async move {
                     // Log agent start
+                    Ok(())
                 })
             });
             api.on_turn_end(|_event, _ctx| {
                 Box::pin(async move {
                     // Log turn end
+                    Ok(())
                 })
             });
         }
@@ -675,6 +775,7 @@ mod tests {
     #[test]
     fn register_tool() {
         let mut api = ExtensionApi::new();
+        api.current_extension_name = "test".to_string();
         api.register_tool(Arc::new(EchoTool));
         let handlers = api.into_handlers();
         assert_eq!(handlers.tools.len(), 1);
@@ -702,15 +803,17 @@ mod tests {
     #[test]
     fn has_agent_start_handler() {
         let mut api = ExtensionApi::new();
+        api.current_extension_name = "test".to_string();
         assert!(api.agent_start_handlers.is_empty());
 
-        api.on_agent_start(|_, _| Box::pin(async {}));
+        api.on_agent_start(|_, _| Box::pin(async { Ok(()) }));
         assert_eq!(api.agent_start_handlers.len(), 1);
     }
 
     #[test]
     fn has_tool_call_handler() {
         let mut api = ExtensionApi::new();
+        api.current_extension_name = "test".to_string();
         assert!(api.tool_call_handlers.is_empty());
 
         api.on_tool_call(|_, _| Box::pin(async { None }));
@@ -733,7 +836,7 @@ mod tests {
             .tool_call_handlers
             .first()
             .unwrap_or_else(|| panic!("expected at least one tool_call handler"));
-        let result = handler(event, ctx).await;
+        let result = (handler.handler)(event, ctx).await;
         let Some(result) = result else {
             panic!("tool_call handler for 'bash' should return Some");
         };
@@ -757,13 +860,14 @@ mod tests {
             .tool_call_handlers
             .first()
             .unwrap_or_else(|| panic!("expected at least one tool_call handler"));
-        let result = handler(event, ctx).await;
+        let result = (handler.handler)(event, ctx).await;
         assert!(result.is_none());
     }
 
     #[test]
     fn register_multiple_tools() {
         let mut api = ExtensionApi::new();
+        api.current_extension_name = "test".to_string();
         api.register_tool(Arc::new(EchoTool));
         api.register_tool(Arc::new(EchoTool));
         let handlers = api.into_handlers();
@@ -775,5 +879,16 @@ mod tests {
         let extensions: Vec<Box<dyn Extension>> = vec![];
         let handlers = init_extensions(&extensions);
         assert!(handlers.is_empty());
+    }
+
+    #[test]
+    fn named_handler_carries_extension_name() {
+        let extensions: Vec<Box<dyn Extension>> = vec![Box::new(BlockBashExtension)];
+        let handlers = init_extensions(&extensions);
+        let named = handlers
+            .tool_call_handlers
+            .first()
+            .unwrap_or_else(|| panic!("expected at least one tool_call handler"));
+        assert_eq!(named.extension_name, "block-bash");
     }
 }

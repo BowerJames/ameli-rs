@@ -14,6 +14,7 @@ ameli-agent-core = { path = "../ameli-agent-core" }
 ameli-ai = { path = "../ameli-ai" }
 
 # External crates inherited from the root workspace
+anyhow = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
