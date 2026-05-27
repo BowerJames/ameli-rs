@@ -236,6 +236,15 @@ pub struct BranchSummaryData {
 /// (from `first_kept_entry_id`) + post-compaction messages are emitted.
 /// Pre-compaction messages before `first_kept_entry_id` are dropped.
 ///
+/// # Compaction assumption
+///
+/// The [`CompactionEntry::first_kept_entry_id`] is assumed to reference an
+/// entry that exists on the active branch path (i.e., appears among the
+/// entries preceding the compaction). If it does not — which would indicate
+/// a bug in the compaction implementation — all pre-compaction messages are
+/// silently dropped and only the compaction summary and post-compaction
+/// messages are emitted.
+///
 /// # Panics
 ///
 /// Does not panic. Returns a default context for empty paths.
@@ -711,6 +720,29 @@ mod tests {
         let ctx = build_session_context_from_path(&path);
         // Compaction summary + kept message "2" (reply) onward = summary + kept
         assert_eq!(ctx.messages.len(), 2);
+    }
+
+    #[test]
+    fn compaction_first_kept_not_on_branch_drops_pre_compaction() {
+        // first_kept_entry_id references "99" which does not exist on the path.
+        // This would indicate a bug in compaction, but the function should
+        // fail gracefully: drop all pre-compaction messages, emit only the
+        // compaction summary and post-compaction messages.
+        let path = vec![
+            make_message_entry("1", None, test_user_message("old1")),
+            make_message_entry("2", Some("1"), test_assistant_message("old2")),
+            make_compaction_entry("3", Some("2"), "summary", "99"),
+            make_message_entry("4", Some("3"), test_user_message("new1")),
+        ];
+        let ctx = build_session_context_from_path(&path);
+
+        // Expect: compaction summary + new1 (pre-compaction dropped since
+        // first_kept_entry_id "99" was never found)
+        assert_eq!(ctx.messages.len(), 2);
+        assert!(
+            matches!(get_msg(&ctx, 0), SessionMessage::Compaction { summary, .. } if summary == "summary")
+        );
+        assert!(matches!(get_msg(&ctx, 1), SessionMessage::Agent(m) if m.role() == "user"));
     }
 
     #[test]

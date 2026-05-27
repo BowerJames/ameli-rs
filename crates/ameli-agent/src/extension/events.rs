@@ -197,6 +197,7 @@ pub struct FormatCompactionSummaryEvent {
 ///
 /// Return `Some(...)` to replace the default conversion; return `None` to
 /// use the default.
+#[derive(Debug)]
 pub struct FormatCompactionSummaryResult {
     /// Replacement agent message for the compaction summary.
     pub message: AgentMessage,
@@ -219,6 +220,7 @@ pub struct FormatBranchSummaryEvent {
 ///
 /// Return `Some(...)` to replace the default conversion; return `None` to
 /// use the default.
+#[derive(Debug)]
 pub struct FormatBranchSummaryResult {
     /// Replacement agent message for the branch summary.
     pub message: AgentMessage,
