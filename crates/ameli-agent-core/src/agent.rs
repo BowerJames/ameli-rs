@@ -551,6 +551,42 @@ impl Agent {
     }
 
     // -----------------------------------------------------------------------
+    // State mutation
+    // -----------------------------------------------------------------------
+
+    /// Replace the conversation transcript.
+    ///
+    /// Must only be called when the agent is idle (no active run).
+    pub async fn set_messages(&self, messages: Vec<AgentMessage>) {
+        let mut inner = self.inner.lock().await;
+        inner.messages = messages;
+    }
+
+    /// Override the system prompt.
+    ///
+    /// Must only be called when the agent is idle (no active run).
+    pub async fn set_system_prompt(&self, prompt: String) {
+        let mut inner = self.inner.lock().await;
+        inner.system_prompt = prompt;
+    }
+
+    /// Switch the active model.
+    ///
+    /// Must only be called when the agent is idle (no active run).
+    pub async fn set_model(&self, model: Model) {
+        let mut inner = self.inner.lock().await;
+        inner.model = model;
+    }
+
+    /// Change the thinking level.
+    ///
+    /// Must only be called when the agent is idle (no active run).
+    pub async fn set_thinking_level(&self, level: ThinkingLevel) {
+        let mut inner = self.inner.lock().await;
+        inner.thinking_level = level;
+    }
+
+    // -----------------------------------------------------------------------
     // Private: context/config builders
     // -----------------------------------------------------------------------
 
@@ -867,6 +903,38 @@ impl ArcAgent {
     /// Clear transcript state, runtime state, and queued messages.
     pub async fn reset(&self) {
         self.inner.reset().await
+    }
+
+    // -----------------------------------------------------------------------
+    // State mutation
+    // -----------------------------------------------------------------------
+
+    /// Replace the conversation transcript.
+    ///
+    /// Must only be called when the agent is idle (no active run).
+    pub async fn set_messages(&self, messages: Vec<AgentMessage>) {
+        self.inner.set_messages(messages).await
+    }
+
+    /// Override the system prompt.
+    ///
+    /// Must only be called when the agent is idle (no active run).
+    pub async fn set_system_prompt(&self, prompt: String) {
+        self.inner.set_system_prompt(prompt).await
+    }
+
+    /// Switch the active model.
+    ///
+    /// Must only be called when the agent is idle (no active run).
+    pub async fn set_model(&self, model: Model) {
+        self.inner.set_model(model).await
+    }
+
+    /// Change the thinking level.
+    ///
+    /// Must only be called when the agent is idle (no active run).
+    pub async fn set_thinking_level(&self, level: ThinkingLevel) {
+        self.inner.set_thinking_level(level).await
     }
 
     // -----------------------------------------------------------------------

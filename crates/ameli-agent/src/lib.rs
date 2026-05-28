@@ -1,8 +1,18 @@
 //! Higher-level, configurable agent built on top of `ameli-agent-core`.
 //!
 //! This crate provides a configurable agent with abstracted session
-//! management (via a trait so different session backends can be plugged in)
-//! and a general agent environment trait for different execution environments.
+//! management (via a trait so different session backends can be plugged in),
+//! an extension system, and the [`AgentSession`] composition layer.
+//!
+//! # Architecture
+//!
+//! ```text
+//! AgentSession<M>        ← composition layer (new!)
+//!     ├── ArcAgent       ← stateful agent (from ameli-agent-core)
+//!     ├── SessionManager<M>  ← session persistence trait
+//!     ├── ExtensionRunner    ← extension event dispatch
+//!     └── Interface          ← minimal UI abstraction
+//! ```
 //!
 //! # Session Management
 //!
@@ -13,22 +23,9 @@
 //! - [`SessionManager`] — trait for session operations. Implementations
 //!   decide their own ID generation, persistence strategy, and internals.
 //!
-//! # Session Tree
-//!
-//! Sessions are append-only trees of [`SessionEntry`] values. Each entry has
-//! an `id` and `parent_id` forming the tree. The active "leaf" tracks the
-//! current position. Branching moves the leaf to an earlier entry, allowing
-//! new branches without modifying history.
-//!
-//! # Session Messages
-//!
-//! [`SessionMessage`] preserves type identity through context building.
-//! Compaction and branch summary entries are **not** converted to
-//! [`AgentMessage`] during context building — instead they become
-//! [`SessionMessage::Compaction`] and [`SessionMessage::BranchSummary`]
-//! variants. The future `AgentSession` converts these to `AgentMessage`,
-//! consulting extension formatting hooks, guaranteeing that extensions
-//! can customize how summaries appear in LLM context.
+//! [`AgentSession`] converts [`SessionMessage`] variants (including
+//! `Compaction` and `BranchSummary`) to [`AgentMessage`] using extension
+//! formatting hooks, with default fallbacks when no extension overrides.
 //!
 //! # Entry Types
 //!
@@ -42,6 +39,7 @@
 //! - [`CustomEntry`] — extension state persistence (not in LLM context)
 //! - [`CustomMessageEntry`] — extension messages (in LLM context)
 
+pub mod agent_session;
 pub mod error;
 pub mod extension;
 pub mod interface;
@@ -49,9 +47,13 @@ pub mod session_manager;
 pub mod types;
 
 // Re-export primary types for convenience.
+pub use agent_session::{AgentSession, AgentSessionConfig};
 pub use error::SessionError;
 pub use extension::{
+    BeforeAgentStartEvent, BeforeAgentStartMessage, BeforeAgentStartResult, CommandContext,
     Extension, ExtensionApi, ExtensionContext, ExtensionError, ExtensionRunner, ExtensionWiring,
+    MessageEndResult, RegisteredCommand, SessionShutdownEvent, SessionShutdownReason,
+    SessionStartEvent, SessionStartReason, ToolExecutionUpdateEvent,
 };
 pub use interface::{CustomNotifyMessage, Interface, NoopInterface, NotifyKind, NotifyMessage};
 pub use session_manager::{BranchSummaryData, SessionManager, SessionMetadata};
