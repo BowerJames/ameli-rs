@@ -50,10 +50,10 @@ pub mod types;
 pub use agent_session::{AgentSession, AgentSessionConfig};
 pub use error::SessionError;
 pub use extension::{
-    BeforeAgentStartEvent, BeforeAgentStartResult, CommandContext, Extension, ExtensionApi,
-    ExtensionContext, ExtensionError, ExtensionRunner, ExtensionWiring, MessageEndResult,
-    RegisteredCommand, SessionShutdownEvent, SessionShutdownReason, SessionStartEvent,
-    SessionStartReason, ToolExecutionUpdateEvent,
+    BeforeAgentStartEvent, BeforeAgentStartMessage, BeforeAgentStartResult, CommandContext,
+    Extension, ExtensionApi, ExtensionContext, ExtensionError, ExtensionRunner, ExtensionWiring,
+    MessageEndResult, RegisteredCommand, SessionShutdownEvent, SessionShutdownReason,
+    SessionStartEvent, SessionStartReason, ToolExecutionUpdateEvent,
 };
 pub use interface::{CustomNotifyMessage, Interface, NoopInterface, NotifyKind, NotifyMessage};
 pub use session_manager::{BranchSummaryData, SessionManager, SessionMetadata};

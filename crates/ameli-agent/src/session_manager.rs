@@ -396,6 +396,23 @@ impl CustomAgentMessage for ExtensionCustomMessage {
 // Default conversion helpers (pub(crate) for use by AgentSession)
 // ---------------------------------------------------------------------------
 
+/// Convert a [`CustomMessageContent`] to an [`AgentMessage::Custom`].
+///
+/// Used by [`AgentSession`](crate::AgentSession) to inject
+/// `before_agent_start` extension messages into the LLM context.
+pub(crate) fn custom_message_content_to_agent_message(
+    custom_type: &str,
+    content: CustomMessageContent,
+    display: bool,
+) -> AgentMessage {
+    let ext_msg = ExtensionCustomMessage {
+        custom_type: custom_type.to_string(),
+        content,
+        display,
+    };
+    AgentMessage::Custom(Box::new(ext_msg))
+}
+
 /// Convert a [`CustomMessageEntry`] to an [`AgentMessage::Custom`].
 ///
 /// Called inside [`build_session_context_from_path`] and available for

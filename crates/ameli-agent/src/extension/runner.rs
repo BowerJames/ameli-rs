@@ -385,7 +385,7 @@ impl ExtensionRunner {
 
         let ctx = self.make_context(cancel);
         let mut current_system_prompt = system_prompt.to_string();
-        let mut messages: Vec<crate::types::CustomMessageContent> = Vec::new();
+        let mut messages: Vec<BeforeAgentStartMessage> = Vec::new();
         let mut modified = false;
 
         for handler in &self.handlers.before_agent_start_handlers {
@@ -990,7 +990,7 @@ impl fmt::Debug for ExtensionRunner {
 #[derive(Debug, Clone)]
 pub struct BeforeAgentStartAccumulated {
     /// Custom messages to inject alongside the user message.
-    pub messages: Option<Vec<crate::types::CustomMessageContent>>,
+    pub messages: Option<Vec<BeforeAgentStartMessage>>,
     /// Replacement system prompt. Last handler's value wins.
     pub system_prompt: Option<String>,
 }
@@ -1016,8 +1016,6 @@ mod tests {
     use crate::extension::ExtensionApi;
     use ameli_agent_core::types::{AgentContext, AgentState, AgentToolResult, ToolExecutionMode};
     use ameli_ai::api::ApiRegistry;
-    use ameli_ai::api::StreamFn;
-    use ameli_ai::stream::create_assistant_message_event_stream;
     use ameli_ai::types::{
         AssistantMessage, Cost, InputType, MediaContentBlock, TextContent, Tool, ToolCall, Usage,
     };

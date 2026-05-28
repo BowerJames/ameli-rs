@@ -52,7 +52,7 @@ use crate::interface::Interface;
 use crate::session_manager::{SessionManager, SessionMetadata};
 use crate::types::SessionMessage;
 use crate::ExtensionRunner;
-use ameli_agent_core::types::AgentMessage;
+use ameli_agent_core::types::{AgentMessage, ThinkingLevel};
 use ameli_agent_core::ArcAgent;
 use ameli_ai::types::ImageContent;
 use std::sync::Arc;
@@ -182,10 +182,28 @@ impl<M: SessionMetadata> AgentSession<M> {
             .emit_before_agent_start(&text, &images, &system_prompt, CancellationToken::new())
             .await;
 
-        // Apply system prompt override if any.
+        // Apply system prompt override if any, otherwise reset to base.
         if let Some(ref acc) = accumulated {
             if let Some(ref sp) = acc.system_prompt {
                 self.set_system_prompt(sp).await;
+            }
+        }
+
+        // Build the messages array: before_agent_start custom messages, then user message.
+        let mut prompt_messages: Vec<AgentMessage> = Vec::new();
+
+        // Inject before_agent_start custom messages.
+        if let Some(ref acc) = accumulated {
+            if let Some(ref msgs) = acc.messages {
+                for msg in msgs {
+                    prompt_messages.push(
+                        crate::session_manager::custom_message_content_to_agent_message(
+                            &msg.custom_type,
+                            msg.content.clone(),
+                            msg.display,
+                        ),
+                    );
+                }
             }
         }
 
@@ -205,14 +223,9 @@ impl<M: SessionMetadata> AgentSession<M> {
                 timestamp: now_ms(),
             }
         };
+        prompt_messages.push(AgentMessage::User(user_msg));
 
-        // Inject before_agent_start custom messages as context before user message.
-        // For now, the accumulated messages are stored for future use by the
-        // downstream application. The core AgentSession injects only the user
-        // message.
-        let _ = accumulated;
-
-        self.agent.prompt(AgentMessage::User(user_msg).into()).await
+        self.agent.prompt(prompt_messages.into()).await
     }
 
     /// Continue from the current transcript.
@@ -314,25 +327,20 @@ impl<M: SessionMetadata> AgentSession<M> {
     /// Restore session context onto the agent state.
     ///
     /// Resolves the session tree into messages and updates the agent state.
+    /// Restores messages, system prompt, and thinking level. Model restoration
+    /// is a downstream concern (requires a model registry to resolve
+    /// `ModelRef` → `Model`).
     async fn restore_session_context(&self) -> anyhow::Result<()> {
-        let (messages, thinking_level, model_ref) = self
+        let (messages, thinking_level, _model_ref) = self
             .resolve_session_messages(CancellationToken::new())
             .await?;
 
-        // Set messages on agent state
-        {
-            let state = self.agent.state().await;
-            // We need to set messages on the agent. Since ArcAgent doesn't
-            // expose a direct setter for messages, we sync by checking if
-            // the agent's current messages differ from the session's.
-            // For now, this is a no-op if the agent already has messages
-            // (e.g., from a prior prompt in the same session).
-            let _ = state;
-        }
+        // Restore transcript.
+        self.agent.set_messages(messages).await;
 
-        let _ = messages;
-        let _ = thinking_level;
-        let _ = model_ref;
+        // Restore thinking level from session (parse string, fallback to Off).
+        let level = parse_thinking_level(&thinking_level);
+        self.agent.set_thinking_level(level).await;
 
         Ok(())
     }
@@ -344,11 +352,7 @@ impl<M: SessionMetadata> AgentSession<M> {
 
     /// Set the system prompt on agent state.
     async fn set_system_prompt(&self, prompt: &str) {
-        // ArcAgent doesn't expose a direct system_prompt setter. The system
-        // prompt is set via AgentState which is read-only from the outside.
-        // For now, the system prompt is managed by the downstream application
-        // via AgentOptions.initial_state.
-        let _ = prompt;
+        self.agent.set_system_prompt(prompt.to_string()).await;
     }
 }
 
@@ -369,6 +373,20 @@ fn now_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+/// Parse a thinking level string (from `SessionContext`) into a
+/// [`ThinkingLevel`]. Falls back to [`ThinkingLevel::Off`] for
+/// unrecognized values.
+fn parse_thinking_level(s: &str) -> ThinkingLevel {
+    match s.to_lowercase().as_str() {
+        "minimal" => ThinkingLevel::Minimal,
+        "low" => ThinkingLevel::Low,
+        "medium" => ThinkingLevel::Medium,
+        "high" => ThinkingLevel::High,
+        "xhigh" => ThinkingLevel::XHigh,
+        _ => ThinkingLevel::Off,
+    }
 }
 
 use std::fmt;
@@ -816,5 +834,131 @@ mod tests {
         // First message should be the compaction summary (a user message wrapping the summary)
         let first = &messages[0];
         assert_eq!(first.role(), "user");
+    }
+
+    // -- State mutation wiring tests -------------------------------------------
+
+    #[tokio::test]
+    async fn restore_session_context_sets_messages() {
+        let agent = test_agent();
+        let sm = Arc::new(TestSessionManager::new());
+
+        // Append messages to session
+        sm.append_message(AgentMessage::User(ameli_ai::types::UserMessage::text(
+            "hello",
+        )))
+        .await
+        .unwrap();
+        sm.append_message(AgentMessage::Assistant(ameli_ai::types::AssistantMessage {
+            content: vec![ameli_ai::types::AssistantContentBlock::Text(
+                ameli_ai::types::TextContent::new("hi there"),
+            )],
+            api: "test".into(),
+            provider: "test".into(),
+            model: "test-model".into(),
+            response_model: None,
+            response_id: None,
+            usage: ameli_ai::types::Usage::default(),
+            stop_reason: ameli_ai::types::StopReason::Stop,
+            error_message: None,
+            timestamp: 1000,
+        }))
+        .await
+        .unwrap();
+
+        let runner = Arc::new(ExtensionRunner::from_extensions(&[]));
+        let session = AgentSession::new(AgentSessionConfig {
+            agent: ArcAgent::new(ameli_agent_core::AgentOptions {
+                initial_state: Some(AgentState {
+                    system_prompt: String::new(),
+                    model: test_model(),
+                    thinking_level: ThinkingLevel::Off,
+                    tools: vec![],
+                    messages: vec![],
+                    is_streaming: false,
+                    streaming_message: None,
+                    pending_tool_calls: HashSet::new(),
+                    error_message: None,
+                }),
+                ..Default::default()
+            }),
+            session_manager: sm,
+            runner,
+            interface: Arc::new(NoopInterface),
+        });
+
+        // Before restore, agent has no messages
+        assert!(session.agent.state().await.messages.is_empty());
+
+        // Restore session context
+        session.restore_session_context().await.unwrap();
+
+        // After restore, agent has the session messages
+        let state = session.agent.state().await;
+        assert_eq!(state.messages.len(), 2);
+        assert_eq!(state.messages[0].role(), "user");
+        assert_eq!(state.messages[1].role(), "assistant");
+    }
+
+    #[tokio::test]
+    async fn restore_session_context_sets_thinking_level() {
+        let agent = test_agent();
+        let sm = Arc::new(TestSessionManager::new());
+
+        // Append a thinking level change
+        sm.append_thinking_level_change("medium").await.unwrap();
+
+        let runner = Arc::new(ExtensionRunner::from_extensions(&[]));
+        let session = AgentSession::new(AgentSessionConfig {
+            agent,
+            session_manager: sm,
+            runner,
+            interface: Arc::new(NoopInterface),
+        });
+
+        session.restore_session_context().await.unwrap();
+
+        let state = session.agent.state().await;
+        assert_eq!(state.thinking_level, ThinkingLevel::Medium);
+    }
+
+    #[tokio::test]
+    async fn set_system_prompt_updates_agent() {
+        let agent = test_agent();
+        let session = test_session(agent);
+
+        // Verify initial prompt is empty
+        assert!(session.agent.state().await.system_prompt.is_empty());
+
+        // Set a new prompt
+        session.set_system_prompt("You are helpful.").await;
+
+        // Verify it was applied
+        assert_eq!(
+            session.agent.state().await.system_prompt,
+            "You are helpful."
+        );
+    }
+
+    #[tokio::test]
+    async fn parse_thinking_level_known_values() {
+        assert_eq!(parse_thinking_level("off"), ThinkingLevel::Off);
+        assert_eq!(parse_thinking_level("minimal"), ThinkingLevel::Minimal);
+        assert_eq!(parse_thinking_level("low"), ThinkingLevel::Low);
+        assert_eq!(parse_thinking_level("medium"), ThinkingLevel::Medium);
+        assert_eq!(parse_thinking_level("high"), ThinkingLevel::High);
+        assert_eq!(parse_thinking_level("xhigh"), ThinkingLevel::XHigh);
+    }
+
+    #[tokio::test]
+    async fn parse_thinking_level_case_insensitive() {
+        assert_eq!(parse_thinking_level("Medium"), ThinkingLevel::Medium);
+        assert_eq!(parse_thinking_level("HIGH"), ThinkingLevel::High);
+    }
+
+    #[tokio::test]
+    async fn parse_thinking_level_unknown_falls_back_to_off() {
+        assert_eq!(parse_thinking_level("unknown"), ThinkingLevel::Off);
+        assert_eq!(parse_thinking_level(""), ThinkingLevel::Off);
     }
 }

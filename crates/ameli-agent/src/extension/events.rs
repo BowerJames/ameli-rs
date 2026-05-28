@@ -292,13 +292,29 @@ pub struct BeforeAgentStartEvent {
     pub system_prompt: String,
 }
 
-/// Combined result from all `before_agent_start` handlers.
+/// Result from a single `before_agent_start` handler.
+///
+/// Each handler may return a custom message to inject alongside the user
+/// prompt and/or override the system prompt for this turn.
 #[derive(Debug, Clone, Default)]
 pub struct BeforeAgentStartResult {
     /// Optional custom message to inject alongside the user message.
-    pub message: Option<crate::types::CustomMessageContent>,
+    pub message: Option<BeforeAgentStartMessage>,
     /// Replacement system prompt for this turn. Last handler's value wins.
     pub system_prompt: Option<String>,
+}
+
+/// A custom message produced by a `before_agent_start` handler.
+#[derive(Debug, Clone)]
+pub struct BeforeAgentStartMessage {
+    /// Custom type discriminator (e.g. `"context"`, `"rules"`).
+    pub custom_type: String,
+    /// Message content (plain text or rich media blocks).
+    pub content: crate::types::CustomMessageContent,
+    /// Whether this message should be visible in the UI.
+    pub display: bool,
+    /// Optional structured details for downstream consumption.
+    pub details: Option<serde_json::Value>,
 }
 
 // ---------------------------------------------------------------------------
