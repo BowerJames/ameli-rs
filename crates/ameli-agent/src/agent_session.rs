@@ -960,7 +960,7 @@ mod tests {
 
     #[tokio::test]
     async fn restore_session_context_sets_messages() {
-        let agent = test_agent();
+        let _agent = test_agent();
         let sm = Arc::new(TestSessionManager::new());
 
         // Append messages to session
@@ -1089,7 +1089,6 @@ mod tests {
     #[tokio::test]
     async fn persist_standard_message_appends_to_session() {
         let sm: Arc<dyn SessionManager<TestMetadata>> = Arc::new(TestSessionManager::new());
-        let runner = Arc::new(ExtensionRunner::from_extensions(&[]));
 
         let msg = AgentMessage::User(ameli_ai::types::UserMessage::text("hello"));
         persist_message(&msg, &sm).await;
@@ -1106,7 +1105,6 @@ mod tests {
     #[tokio::test]
     async fn persist_custom_message_appends_to_session() {
         let sm: Arc<dyn SessionManager<TestMetadata>> = Arc::new(TestSessionManager::new());
-        let runner = Arc::new(ExtensionRunner::from_extensions(&[]));
 
         let msg = crate::session_manager::custom_message_content_to_agent_message(
             "context",
