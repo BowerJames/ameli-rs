@@ -433,12 +433,12 @@ impl ExtensionRunner {
     /// Handlers run in order. Each can return a replacement message that
     /// preserves the original role. Returns the final replacement, or `None`
     /// if no handler modified the message.
-    pub async fn emit_message_end(&self, event: MessageEndEvent) -> Option<AgentMessage> {
+    pub async fn emit_message_end(&self, event: MessageEndEvent, cancel: CancellationToken) -> Option<AgentMessage> {
         if self.handlers.message_end_handlers.is_empty() {
             return None;
         }
 
-        let ctx = self.make_context(CancellationToken::new());
+        let ctx = self.make_context(cancel);
         let original_role = event.message.role().to_string();
         let mut current_message = event.message;
         let mut modified = false;
@@ -1634,7 +1634,7 @@ mod tests {
         let event = MessageEndEvent {
             message: AgentMessage::User(ameli_ai::types::UserMessage::text("original")),
         };
-        let result = runner.emit_message_end(event).await;
+        let result = runner.emit_message_end(event, CancellationToken::new()).await;
         assert!(result.is_some());
         let msg = result.unwrap();
         assert_eq!(msg.role(), "user");
@@ -1646,7 +1646,7 @@ mod tests {
         let event = MessageEndEvent {
             message: AgentMessage::User(ameli_ai::types::UserMessage::text("hi")),
         };
-        let result = runner.emit_message_end(event).await;
+        let result = runner.emit_message_end(event, CancellationToken::new()).await;
         assert!(result.is_none());
     }
 

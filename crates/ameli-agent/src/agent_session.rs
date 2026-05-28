@@ -116,7 +116,7 @@ async fn handle_agent_event<M: SessionMetadata>(
                 message: message.clone(),
             };
             let final_msg = runner
-                .emit_message_end(event)
+                .emit_message_end(event, cancel)
                 .await
                 .unwrap_or_else(|| message.clone());
 
