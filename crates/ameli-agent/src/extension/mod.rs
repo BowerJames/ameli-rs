@@ -42,7 +42,7 @@ pub mod runner;
 
 pub use context::ExtensionContext;
 pub use events::*;
-pub use runner::{ExtensionError, ExtensionRunner, ExtensionWiring};
+pub use runner::{ExtensionError, ExtensionRunner};
 
 use ameli_agent_core::types::AgentTool;
 use std::fmt;

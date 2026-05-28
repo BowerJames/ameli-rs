@@ -1,21 +1,17 @@
 //! Extension runner — bridges extension handlers to the agent loop.
 //!
 //! [`ExtensionRunner`] is the runtime that connects extension event handlers
-//! to the agent via two mechanisms:
-//!
-//! 1. **Hook closures** installed into [`AgentOptions`] (`before_tool_call`,
-//!    `after_tool_call`, `transform_context`) for hook events.
-//! 2. **Event subscription** on [`ArcAgent`] for notification dispatch.
+//! to the agent via hook closures installed into [`AgentOptions`].
+//! [`AgentSession`](crate::AgentSession) handles event subscription and
+//! dispatches to the runner's emit methods.
 //!
 //! # Lifecycle
 //!
 //! 1. Create extensions and build a runner with [`ExtensionRunner::from_extensions`].
 //! 2. Call [`ExtensionRunner::install_hooks`] to install hook closures into
 //!    [`AgentOptions`].
-//! 3. Create an [`ArcAgent`] from those options.
-//! 4. Call [`ExtensionRunner::wire_notifications`] to subscribe to agent events.
-//!    Keep the returned [`ExtensionWiring`] alive — dropping it unsubscribes.
-//! 5. Use the agent normally.
+//! 3. Construct an [`AgentSession`](crate::AgentSession) (or an `ArcAgent`
+//!    from those options) to handle event subscription and persistence.
 //!
 //! # Error handling
 //!
@@ -37,7 +33,7 @@ use ameli_agent_core::types::{
     AfterToolCallContext, AfterToolCallResult, AgentMessage, AgentTool, BeforeToolCallContext,
     BeforeToolCallResult,
 };
-use ameli_agent_core::{ArcAgent, Subscription};
+
 use std::fmt;
 use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 use std::sync::Arc;
@@ -69,25 +65,6 @@ pub struct ExtensionError {
 ///
 /// Listeners are called synchronously and should not panic.
 pub type ExtensionErrorListener = Arc<dyn Fn(ExtensionError) + Send + Sync>;
-
-// ---------------------------------------------------------------------------
-// ExtensionWiring
-// ---------------------------------------------------------------------------
-
-/// Handle that keeps the agent event subscription alive.
-///
-/// Dropping this unsubscribes from agent events. The caller must hold onto it
-/// for as long as the extension runner should receive notification events.
-pub struct ExtensionWiring {
-    // Holds the ArcAgent subscription. Dropping unsubscribes.
-    _subscription: Subscription,
-}
-
-impl fmt::Debug for ExtensionWiring {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ExtensionWiring").finish()
-    }
-}
 
 // ---------------------------------------------------------------------------
 // ExtensionRunner
@@ -255,32 +232,6 @@ impl ExtensionRunner {
     }
 
     // -----------------------------------------------------------------------
-    // Notification wiring
-    // -----------------------------------------------------------------------
-
-    /// Subscribe to [`ArcAgent`] events and dispatch them as extension
-    /// notification events.
-    ///
-    /// Returns an [`ExtensionWiring`] that holds the subscription. The caller
-    /// must keep it alive for as long as notifications should be received.
-    /// Dropping it unsubscribes from agent events.
-    pub async fn wire_notifications(self: &Arc<Self>, agent: &ArcAgent) -> ExtensionWiring {
-        let runner = self.clone();
-        let subscription = agent
-            .subscribe(Arc::new(move |event, cancel| {
-                let runner = runner.clone();
-                Box::pin(async move {
-                    runner.dispatch_agent_event(event, cancel).await;
-                })
-            }))
-            .await;
-
-        ExtensionWiring {
-            _subscription: subscription,
-        }
-    }
-
-    // -----------------------------------------------------------------------
     // Summary formatting hooks
     // -----------------------------------------------------------------------
 
@@ -433,7 +384,11 @@ impl ExtensionRunner {
     /// Handlers run in order. Each can return a replacement message that
     /// preserves the original role. Returns the final replacement, or `None`
     /// if no handler modified the message.
-    pub async fn emit_message_end(&self, event: MessageEndEvent, cancel: CancellationToken) -> Option<AgentMessage> {
+    pub async fn emit_message_end(
+        &self,
+        event: MessageEndEvent,
+        cancel: CancellationToken,
+    ) -> Option<AgentMessage> {
         if self.handlers.message_end_handlers.is_empty() {
             return None;
         }
@@ -532,8 +487,11 @@ impl ExtensionRunner {
                 self.dispatch_message_update(message, assistant_message_event, cancel)
                     .await;
             }
-            AgentEvent::MessageEnd { message } => {
-                self.dispatch_message_end(message, cancel).await;
+            AgentEvent::MessageEnd { message: _ } => {
+                // MessageEnd is handled by AgentSession via emit_message_end()
+                // (sequential chain with replacement). This arm should never be
+                // reached in normal operation since AgentSession intercepts
+                // MessageEnd before delegating to dispatch_agent_event().
             }
             AgentEvent::ToolExecutionStart {
                 tool_call_id,
@@ -679,18 +637,6 @@ impl ExtensionRunner {
                     error: e.to_string(),
                 });
             }
-        }
-    }
-
-    pub async fn dispatch_message_end(&self, message: AgentMessage, cancel: CancellationToken) {
-        let ctx = self.make_context(cancel);
-        let event = MessageEndEvent { message };
-        for handler in &self.handlers.message_end_handlers {
-            // message_end handlers are hooks that return Option<MessageEndResult>
-            // The full sequential-chain logic lives in emit_message_end(),
-            // which is called by AgentSession. This dispatch path is for the
-            // fire-and-forget notification wiring via wire_notifications.
-            let _ = (handler.handler)(event.clone(), ctx.clone()).await;
         }
     }
 
@@ -1634,7 +1580,9 @@ mod tests {
         let event = MessageEndEvent {
             message: AgentMessage::User(ameli_ai::types::UserMessage::text("original")),
         };
-        let result = runner.emit_message_end(event, CancellationToken::new()).await;
+        let result = runner
+            .emit_message_end(event, CancellationToken::new())
+            .await;
         assert!(result.is_some());
         let msg = result.unwrap();
         assert_eq!(msg.role(), "user");
@@ -1646,7 +1594,9 @@ mod tests {
         let event = MessageEndEvent {
             message: AgentMessage::User(ameli_ai::types::UserMessage::text("hi")),
         };
-        let result = runner.emit_message_end(event, CancellationToken::new()).await;
+        let result = runner
+            .emit_message_end(event, CancellationToken::new())
+            .await;
         assert!(result.is_none());
     }
 
