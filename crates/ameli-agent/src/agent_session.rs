@@ -111,6 +111,7 @@ async fn handle_agent_event<M: SessionMetadata>(
     match &event {
         AgentEvent::MessageEnd { message } => {
             // Run the message_end hook chain — handlers may replace the message.
+            // This is the sole dispatch path (matching pi's emitMessageEnd).
             let event = crate::extension::events::MessageEndEvent {
                 message: message.clone(),
             };
@@ -118,13 +119,6 @@ async fn handle_agent_event<M: SessionMetadata>(
                 .emit_message_end(event)
                 .await
                 .unwrap_or_else(|| message.clone());
-
-            // Dispatch the fire-and-forget message_end notification to
-            // extensions. This is separate from the hook chain above — it
-            // notifies handlers that don't return a result.
-            runner
-                .dispatch_message_end(final_msg.clone(), cancel.clone())
-                .await;
 
             // Persist to session.
             persist_message(&final_msg, session_manager).await;
@@ -199,13 +193,10 @@ impl<M: SessionMetadata> AgentSession<M> {
             }))
             .await;
 
-        // Emit session_start to extensions (fire-and-forget, spawned in background).
-        let runner_bg = runner.clone();
-        tokio::spawn(async move {
-            runner_bg
-                .emit_session_start(crate::extension::events::SessionStartReason::Startup)
-                .await;
-        });
+        // Emit session_start to extensions.
+        runner
+            .emit_session_start(crate::extension::events::SessionStartReason::Startup)
+            .await;
 
         Self {
             agent,
@@ -318,7 +309,10 @@ impl<M: SessionMetadata> AgentSession<M> {
             }
             ameli_ai::types::UserMessage {
                 content: ameli_ai::types::UserContent::Blocks(content),
-                timestamp: now_ms(),
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64,
             }
         };
         prompt_messages.push(AgentMessage::User(user_msg));
@@ -465,13 +459,6 @@ impl<M: SessionMetadata> fmt::Debug for AgentSession<M> {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
-}
 
 /// Parse a thinking level string (from `SessionContext`) into a
 /// [`ThinkingLevel`]. Falls back to [`ThinkingLevel::Off`] for
@@ -699,9 +686,35 @@ mod tests {
                 .unwrap_or_else(|e| e.into_inner())
                 .clone();
             Box::pin(async move {
-                Ok(crate::session_manager::build_session_context_from_path(
-                    &entries,
-                ))
+                // Simple context building for tests: convert MessageEntry to
+                // SessionMessage::Agent, default thinking_level and model.
+                let mut messages = Vec::new();
+                let mut thinking_level = "off".to_string();
+                let mut model: Option<crate::types::ModelRef> = None;
+                for entry in &entries {
+                    match entry {
+                        crate::types::SessionEntry::Message(e) => {
+                            messages.push(crate::types::SessionMessage::Agent(Box::new(
+                                e.message.clone(),
+                            )));
+                        }
+                        crate::types::SessionEntry::ThinkingLevelChange(e) => {
+                            thinking_level = e.thinking_level.clone();
+                        }
+                        crate::types::SessionEntry::ModelChange(e) => {
+                            model = Some(crate::types::ModelRef {
+                                provider: e.provider.clone(),
+                                model_id: e.model_id.clone(),
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(crate::types::SessionContext {
+                    messages,
+                    thinking_level,
+                    model,
+                })
             })
         }
 
@@ -724,7 +737,8 @@ mod tests {
                 crate::types::MessageEntry {
                     id: id.clone(),
                     parent_id,
-                    timestamp: crate::session_manager::now_iso8601(),
+                    timestamp: chrono::Utc::now()
+                        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
                     message,
                 },
             ));
@@ -742,7 +756,8 @@ mod tests {
                 crate::types::ThinkingLevelChangeEntry {
                     id: id.clone(),
                     parent_id,
-                    timestamp: crate::session_manager::now_iso8601(),
+                    timestamp: chrono::Utc::now()
+                        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
                     thinking_level: thinking_level.to_string(),
                 },
             ));
@@ -761,7 +776,8 @@ mod tests {
                 crate::types::ModelChangeEntry {
                     id: id.clone(),
                     parent_id,
-                    timestamp: crate::session_manager::now_iso8601(),
+                    timestamp: chrono::Utc::now()
+                        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
                     provider: provider.to_string(),
                     model_id: model_id.to_string(),
                 },
@@ -784,7 +800,8 @@ mod tests {
                 crate::types::CompactionEntry {
                     id: id.clone(),
                     parent_id,
-                    timestamp: crate::session_manager::now_iso8601(),
+                    timestamp: chrono::Utc::now()
+                        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
                     summary: summary.to_string(),
                     first_kept_entry_id: first_kept_entry_id.to_string(),
                     tokens_before,
@@ -807,7 +824,8 @@ mod tests {
                 crate::types::CustomEntry {
                     id: id.clone(),
                     parent_id,
-                    timestamp: crate::session_manager::now_iso8601(),
+                    timestamp: chrono::Utc::now()
+                        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
                     custom_type: custom_type.to_string(),
                     data,
                 },
@@ -829,7 +847,8 @@ mod tests {
                 crate::types::CustomMessageEntry {
                     id: id.clone(),
                     parent_id,
-                    timestamp: crate::session_manager::now_iso8601(),
+                    timestamp: chrono::Utc::now()
+                        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
                     custom_type: custom_type.to_string(),
                     content,
                     display,
