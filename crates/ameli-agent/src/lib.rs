@@ -50,7 +50,9 @@ pub mod types;
 
 // Re-export primary types for convenience.
 pub use error::SessionError;
-pub use extension::{Extension, ExtensionApi, ExtensionContext};
+pub use extension::{
+    Extension, ExtensionApi, ExtensionContext, ExtensionError, ExtensionRunner, ExtensionWiring,
+};
 pub use interface::{CustomNotifyMessage, Interface, NoopInterface, NotifyKind, NotifyMessage};
 pub use session_manager::{BranchSummaryData, SessionManager, SessionMetadata};
 pub use types::{
