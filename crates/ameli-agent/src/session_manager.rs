@@ -361,6 +361,7 @@ struct ExtensionCustomMessage {
     custom_type: String,
     content: CustomMessageContent,
     display: bool,
+    details: Option<serde_json::Value>,
 }
 
 impl CustomAgentMessage for ExtensionCustomMessage {
@@ -371,7 +372,7 @@ impl CustomAgentMessage for ExtensionCustomMessage {
         Box::new(self.clone())
     }
     fn to_json(&self) -> serde_json::Value {
-        match &self.content {
+        let base = match &self.content {
             CustomMessageContent::Text(t) => serde_json::json!({
                 "customType": self.custom_type,
                 "content": t,
@@ -382,6 +383,13 @@ impl CustomAgentMessage for ExtensionCustomMessage {
                 "content": blocks,
                 "display": self.display,
             }),
+        };
+        if let Some(details) = &self.details {
+            let mut map = base.as_object().cloned().unwrap_or_default();
+            map.insert("details".to_string(), details.clone());
+            serde_json::Value::Object(map)
+        } else {
+            base
         }
     }
     fn fmt_debug(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -404,11 +412,13 @@ pub(crate) fn custom_message_content_to_agent_message(
     custom_type: &str,
     content: CustomMessageContent,
     display: bool,
+    details: Option<serde_json::Value>,
 ) -> AgentMessage {
     let ext_msg = ExtensionCustomMessage {
         custom_type: custom_type.to_string(),
         content,
         display,
+        details,
     };
     AgentMessage::Custom(Box::new(ext_msg))
 }
@@ -422,6 +432,7 @@ pub(crate) fn custom_message_entry_to_agent_message(entry: &CustomMessageEntry) 
         custom_type: entry.custom_type.clone(),
         content: entry.content.clone(),
         display: entry.display,
+        details: None,
     };
     AgentMessage::Custom(Box::new(ext_msg))
 }

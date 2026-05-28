@@ -79,7 +79,8 @@ pub struct SessionContext {
 ///
 /// Extensions can inject either plain text or rich content (text + images)
 /// into the LLM context.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum CustomMessageContent {
     /// Plain text content.
     Text(String),

@@ -498,7 +498,7 @@ impl ExtensionRunner {
 
     /// Map an [`AgentEvent`](ameli_agent_core::types::AgentEvent) to extension
     /// notification events and dispatch to registered handlers.
-    async fn dispatch_agent_event(
+    pub async fn dispatch_agent_event(
         &self,
         event: ameli_agent_core::types::AgentEvent,
         cancel: CancellationToken,
@@ -574,7 +574,7 @@ impl ExtensionRunner {
     // Notification dispatchers (one per notification event type)
     // -----------------------------------------------------------------------
 
-    async fn dispatch_agent_start(&self, cancel: CancellationToken) {
+    pub async fn dispatch_agent_start(&self, cancel: CancellationToken) {
         let ctx = self.make_context(cancel);
         let event = AgentStartEvent;
         for handler in &self.handlers.agent_start_handlers {
@@ -588,7 +588,7 @@ impl ExtensionRunner {
         }
     }
 
-    async fn dispatch_agent_end(&self, messages: Vec<AgentMessage>, cancel: CancellationToken) {
+    pub async fn dispatch_agent_end(&self, messages: Vec<AgentMessage>, cancel: CancellationToken) {
         let ctx = self.make_context(cancel);
         let event = AgentEndEvent { messages };
         for handler in &self.handlers.agent_end_handlers {
@@ -602,7 +602,7 @@ impl ExtensionRunner {
         }
     }
 
-    async fn dispatch_turn_start(&self, cancel: CancellationToken) {
+    pub async fn dispatch_turn_start(&self, cancel: CancellationToken) {
         let turn_index = self.turn_index.load(AtomicOrdering::SeqCst);
         let ctx = self.make_context(cancel);
         let event = TurnStartEvent {
@@ -620,7 +620,7 @@ impl ExtensionRunner {
         }
     }
 
-    async fn dispatch_turn_end(
+    pub async fn dispatch_turn_end(
         &self,
         message: AgentMessage,
         tool_results: Vec<ameli_ai::types::ToolResultMessage>,
@@ -646,7 +646,7 @@ impl ExtensionRunner {
         }
     }
 
-    async fn dispatch_message_start(&self, message: AgentMessage, cancel: CancellationToken) {
+    pub async fn dispatch_message_start(&self, message: AgentMessage, cancel: CancellationToken) {
         let ctx = self.make_context(cancel);
         let event = MessageStartEvent { message };
         for handler in &self.handlers.message_start_handlers {
@@ -660,7 +660,7 @@ impl ExtensionRunner {
         }
     }
 
-    async fn dispatch_message_update(
+    pub async fn dispatch_message_update(
         &self,
         message: AgentMessage,
         assistant_message_event: Box<ameli_ai::types::AssistantMessageEvent>,
@@ -682,7 +682,7 @@ impl ExtensionRunner {
         }
     }
 
-    async fn dispatch_message_end(&self, message: AgentMessage, cancel: CancellationToken) {
+    pub async fn dispatch_message_end(&self, message: AgentMessage, cancel: CancellationToken) {
         let ctx = self.make_context(cancel);
         let event = MessageEndEvent { message };
         for handler in &self.handlers.message_end_handlers {
@@ -694,7 +694,7 @@ impl ExtensionRunner {
         }
     }
 
-    async fn dispatch_tool_execution_start(
+    pub async fn dispatch_tool_execution_start(
         &self,
         tool_call_id: String,
         tool_name: String,
@@ -718,7 +718,7 @@ impl ExtensionRunner {
         }
     }
 
-    async fn dispatch_tool_execution_update(
+    pub async fn dispatch_tool_execution_update(
         &self,
         tool_call_id: String,
         tool_name: String,
@@ -744,7 +744,7 @@ impl ExtensionRunner {
         }
     }
 
-    async fn dispatch_tool_execution_end(
+    pub async fn dispatch_tool_execution_end(
         &self,
         tool_call_id: String,
         tool_name: String,

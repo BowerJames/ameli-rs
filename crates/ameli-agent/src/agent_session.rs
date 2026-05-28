@@ -32,7 +32,7 @@
 //!     fn created_at(&self) -> &str { &self.created_at }
 //! }
 //!
-//! fn example(
+//! async fn example(
 //!     agent: ArcAgent,
 //!     session: Arc<dyn SessionManager<MyMetadata>>,
 //!     runner: Arc<ExtensionRunner>,
@@ -43,17 +43,17 @@
 //!         runner,
 //!         interface: Arc::new(NoopInterface),
 //!     };
-//!     AgentSession::new(config)
+//!     AgentSession::new(config).await
 //! }
 //! ```
 
 use crate::extension::ExtensionContext;
 use crate::interface::Interface;
 use crate::session_manager::{SessionManager, SessionMetadata};
-use crate::types::SessionMessage;
+use crate::types::{CustomMessageContent, SessionMessage};
 use crate::ExtensionRunner;
-use ameli_agent_core::types::{AgentMessage, ThinkingLevel};
-use ameli_agent_core::ArcAgent;
+use ameli_agent_core::types::{AgentEvent, AgentMessage, ThinkingLevel};
+use ameli_agent_core::{ArcAgent, Subscription};
 use ameli_ai::types::ImageContent;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -93,6 +93,86 @@ pub struct AgentSession<M: SessionMetadata> {
     session_manager: Arc<dyn SessionManager<M>>,
     runner: Arc<ExtensionRunner>,
     interface: Arc<dyn Interface>,
+    _subscription: Subscription,
+}
+
+// ---------------------------------------------------------------------------
+// Agent event handler (runs inside subscriber closure)
+// ---------------------------------------------------------------------------
+
+/// Handle an [`AgentEvent`] from the agent: dispatch extension notifications
+/// and persist messages to the session.
+async fn handle_agent_event<M: SessionMetadata>(
+    event: AgentEvent,
+    session_manager: &Arc<dyn SessionManager<M>>,
+    runner: &Arc<ExtensionRunner>,
+    cancel: CancellationToken,
+) {
+    match &event {
+        AgentEvent::MessageEnd { message } => {
+            // Run the message_end hook chain — handlers may replace the message.
+            let event = crate::extension::events::MessageEndEvent {
+                message: message.clone(),
+            };
+            let final_msg = runner
+                .emit_message_end(event)
+                .await
+                .unwrap_or_else(|| message.clone());
+
+            // Dispatch the fire-and-forget message_end notification to
+            // extensions. This is separate from the hook chain above — it
+            // notifies handlers that don't return a result.
+            runner
+                .dispatch_message_end(final_msg.clone(), cancel.clone())
+                .await;
+
+            // Persist to session.
+            persist_message(&final_msg, session_manager).await;
+        }
+        _ => {
+            // All other events: dispatch to extensions as notifications.
+            runner.dispatch_agent_event(event, cancel).await;
+        }
+    }
+}
+
+/// Persist a finalized message to the session tree.
+async fn persist_message<M: SessionMetadata>(
+    message: &AgentMessage,
+    session_manager: &Arc<dyn SessionManager<M>>,
+) {
+    match message {
+        AgentMessage::User(_) | AgentMessage::Assistant(_) | AgentMessage::ToolResult(_) => {
+            if let Err(e) = session_manager.append_message(message.clone()).await {
+                tracing::warn!("Failed to persist message to session: {e}");
+            }
+        }
+        AgentMessage::Custom(custom_msg) => {
+            // Extract fields from the custom message via to_json().
+            let json = custom_msg.to_json();
+            if let (Some(custom_type), Some(content_val)) = (
+                json.get("customType").and_then(|v| v.as_str()),
+                json.get("content"),
+            ) {
+                let content =
+                    match serde_json::from_value::<CustomMessageContent>(content_val.clone()) {
+                        Ok(c) => c,
+                        Err(_) => CustomMessageContent::Text(content_val.to_string()),
+                    };
+                let display = json
+                    .get("display")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
+                let details = json.get("details").cloned();
+                if let Err(e) = session_manager
+                    .append_custom_message_entry(custom_type, content, display, details)
+                    .await
+                {
+                    tracing::warn!("Failed to persist custom message to session: {e}");
+                }
+            }
+        }
+    }
 }
 
 impl<M: SessionMetadata> AgentSession<M> {
@@ -100,23 +180,40 @@ impl<M: SessionMetadata> AgentSession<M> {
     ///
     /// Restores session state from the session manager, subscribes to agent
     /// events for persistence, and emits `session_start` to extensions.
-    pub fn new(config: AgentSessionConfig<M>) -> Self {
-        let session = Self {
-            agent: config.agent,
-            session_manager: config.session_manager,
-            runner: config.runner,
-            interface: config.interface,
-        };
+    pub async fn new(config: AgentSessionConfig<M>) -> Self {
+        let agent = config.agent;
+        let session_manager = config.session_manager;
+        let runner = config.runner;
+        let interface = config.interface;
+
+        // Subscribe to agent events for extension dispatch and persistence.
+        let sm = session_manager.clone();
+        let runner_clone = runner.clone();
+        let subscription = agent
+            .subscribe(Arc::new(move |event, cancel| {
+                let sm = sm.clone();
+                let runner = runner_clone.clone();
+                Box::pin(async move {
+                    handle_agent_event(event, &sm, &runner, cancel).await;
+                })
+            }))
+            .await;
 
         // Emit session_start to extensions (fire-and-forget, spawned in background).
-        let runner = session.runner.clone();
+        let runner_bg = runner.clone();
         tokio::spawn(async move {
-            runner
+            runner_bg
                 .emit_session_start(crate::extension::events::SessionStartReason::Startup)
                 .await;
         });
 
-        session
+        Self {
+            agent,
+            session_manager,
+            runner,
+            interface,
+            _subscription: subscription,
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -201,6 +298,7 @@ impl<M: SessionMetadata> AgentSession<M> {
                             &msg.custom_type,
                             msg.content.clone(),
                             msg.display,
+                            msg.details.clone(),
                         ),
                     );
                 }
@@ -466,7 +564,7 @@ mod tests {
         fn init(&self, _api: &mut ExtensionApi) {}
     }
 
-    fn test_session(agent: ArcAgent) -> AgentSession<TestMetadata> {
+    async fn test_session(agent: ArcAgent) -> AgentSession<TestMetadata> {
         let session_manager = Arc::new(TestSessionManager::new());
         let runner = Arc::new(ExtensionRunner::from_extensions(&[Box::new(
             NoCommandsExtension,
@@ -477,19 +575,20 @@ mod tests {
             runner,
             interface: Arc::new(NoopInterface),
         })
+        .await
     }
 
     #[tokio::test]
     async fn agent_session_construction() {
         let agent = test_agent();
-        let session = test_session(agent);
+        let session = test_session(agent).await;
         assert!(!session.is_active().await);
     }
 
     #[tokio::test]
     async fn command_returns_error_for_unknown() {
         let agent = test_agent();
-        let session = test_session(agent);
+        let session = test_session(agent).await;
         let result = session.command("unknown", "").await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("no command"));
@@ -498,7 +597,7 @@ mod tests {
     #[tokio::test]
     async fn shutdown_completes() {
         let agent = test_agent();
-        let session = test_session(agent);
+        let session = test_session(agent).await;
         session.shutdown().await;
     }
 
@@ -756,7 +855,7 @@ mod tests {
     #[tokio::test]
     async fn resolve_session_messages_empty() {
         let agent = test_agent();
-        let session = test_session(agent);
+        let session = test_session(agent).await;
 
         let (messages, thinking_level, model) = session
             .resolve_session_messages(CancellationToken::new())
@@ -788,7 +887,8 @@ mod tests {
             session_manager: sm,
             runner,
             interface: Arc::new(NoopInterface),
-        });
+        })
+        .await;
 
         let (messages, _, _) = session
             .resolve_session_messages(CancellationToken::new())
@@ -822,7 +922,8 @@ mod tests {
             session_manager: sm,
             runner,
             interface: Arc::new(NoopInterface),
-        });
+        })
+        .await;
 
         let (messages, _, _) = session
             .resolve_session_messages(CancellationToken::new())
@@ -885,7 +986,8 @@ mod tests {
             session_manager: sm,
             runner,
             interface: Arc::new(NoopInterface),
-        });
+        })
+        .await;
 
         // Before restore, agent has no messages
         assert!(session.agent.state().await.messages.is_empty());
@@ -914,7 +1016,8 @@ mod tests {
             session_manager: sm,
             runner,
             interface: Arc::new(NoopInterface),
-        });
+        })
+        .await;
 
         session.restore_session_context().await.unwrap();
 
@@ -925,7 +1028,7 @@ mod tests {
     #[tokio::test]
     async fn set_system_prompt_updates_agent() {
         let agent = test_agent();
-        let session = test_session(agent);
+        let session = test_session(agent).await;
 
         // Verify initial prompt is empty
         assert!(session.agent.state().await.system_prompt.is_empty());
@@ -960,5 +1063,66 @@ mod tests {
     async fn parse_thinking_level_unknown_falls_back_to_off() {
         assert_eq!(parse_thinking_level("unknown"), ThinkingLevel::Off);
         assert_eq!(parse_thinking_level(""), ThinkingLevel::Off);
+    }
+
+    // -- Event persistence tests -----------------------------------------------
+
+    #[tokio::test]
+    async fn persist_standard_message_appends_to_session() {
+        let sm: Arc<dyn SessionManager<TestMetadata>> = Arc::new(TestSessionManager::new());
+        let runner = Arc::new(ExtensionRunner::from_extensions(&[]));
+
+        let msg = AgentMessage::User(ameli_ai::types::UserMessage::text("hello"));
+        persist_message(&msg, &sm).await;
+
+        let entries = sm.entries().await.unwrap();
+        assert_eq!(entries.len(), 1);
+        if let crate::types::SessionEntry::Message(me) = &entries[0] {
+            assert_eq!(me.message.role(), "user");
+        } else {
+            panic!("Expected Message entry");
+        }
+    }
+
+    #[tokio::test]
+    async fn persist_custom_message_appends_to_session() {
+        let sm: Arc<dyn SessionManager<TestMetadata>> = Arc::new(TestSessionManager::new());
+        let runner = Arc::new(ExtensionRunner::from_extensions(&[]));
+
+        let msg = crate::session_manager::custom_message_content_to_agent_message(
+            "context",
+            CustomMessageContent::Text("some context".into()),
+            true,
+            None,
+        );
+        persist_message(&msg, &sm).await;
+
+        let entries = sm.entries().await.unwrap();
+        assert_eq!(entries.len(), 1);
+        if let crate::types::SessionEntry::CustomMessage(cme) = &entries[0] {
+            assert_eq!(cme.custom_type, "context");
+            assert!(cme.display);
+        } else {
+            panic!("Expected CustomMessage entry");
+        }
+    }
+
+    #[tokio::test]
+    async fn handle_agent_event_persists_message_end() {
+        let sm: Arc<dyn SessionManager<TestMetadata>> = Arc::new(TestSessionManager::new());
+        let runner = Arc::new(ExtensionRunner::from_extensions(&[]));
+
+        let event = AgentEvent::MessageEnd {
+            message: AgentMessage::User(ameli_ai::types::UserMessage::text("hello")),
+        };
+        handle_agent_event(event, &sm, &runner, CancellationToken::new()).await;
+
+        let entries = sm.entries().await.unwrap();
+        assert_eq!(entries.len(), 1);
+        if let crate::types::SessionEntry::Message(me) = &entries[0] {
+            assert_eq!(me.message.role(), "user");
+        } else {
+            panic!("Expected Message entry");
+        }
     }
 }

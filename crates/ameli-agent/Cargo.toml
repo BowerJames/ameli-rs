@@ -15,8 +15,10 @@ ameli-ai = { path = "../ameli-ai" }
 
 # External crates inherited from the root workspace
 anyhow = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { version = "0.7", features = ["rt"] }
 chrono = { version = "0.4", features = ["serde"] }
+tracing = { workspace = true }

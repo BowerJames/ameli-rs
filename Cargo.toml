@@ -27,8 +27,9 @@ indexing_slicing = "warn"
 # Define shared external dependencies here. 
 # Sub-crates can pull them in using `serde = { workspace = true }` to keep versions perfectly in sync.
 serde = { version = "1.0", features = ["derive"] }
-jsonschema = "0.30"
 serde_json = "1.0"
+tracing = "0.1"
+jsonschema = "0.30"
 tokio = { version = "1.0", features = ["full"] }
 anyhow = "1.0"
 futures = "0.3"
