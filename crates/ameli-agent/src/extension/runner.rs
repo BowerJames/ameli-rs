@@ -960,12 +960,10 @@ fn now_ms() -> u64 {
 mod tests {
     use super::*;
     use crate::extension::ExtensionApi;
-    use ameli_agent_core::types::{AgentContext, AgentState, AgentToolResult, ToolExecutionMode};
-    use ameli_ai::api::ApiRegistry;
+    use ameli_agent_core::types::{AgentContext, AgentToolResult, ToolExecutionMode};
     use ameli_ai::types::{
-        AssistantMessage, Cost, InputType, MediaContentBlock, TextContent, Tool, ToolCall, Usage,
+        AssistantMessage, MediaContentBlock, TextContent, Tool, ToolCall, Usage,
     };
-    use std::collections::HashSet;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     // -- Test extensions ----------------------------------------------------
@@ -1189,43 +1187,6 @@ mod tests {
                     })
                 }),
             );
-        }
-    }
-
-    // -- Helpers ------------------------------------------------------------
-
-    fn test_model() -> ameli_ai::types::Model {
-        ameli_ai::types::Model {
-            id: "test-model".into(),
-            name: "Test Model".into(),
-            api: "test-api".into(),
-            provider: "test-provider".into(),
-            base_url: "http://localhost".into(),
-            reasoning: false,
-            thinking_level_map: None,
-            input: vec![InputType::Text],
-            cost: Cost::default(),
-            context_window: 128_000,
-            max_tokens: 16_384,
-            compat: None,
-        }
-    }
-
-    fn test_agent_options(registry: Arc<ApiRegistry>) -> ameli_agent_core::AgentOptions {
-        ameli_agent_core::AgentOptions {
-            initial_state: Some(AgentState {
-                system_prompt: String::new(),
-                model: test_model(),
-                thinking_level: ameli_agent_core::types::ThinkingLevel::Off,
-                tools: vec![],
-                messages: vec![],
-                is_streaming: false,
-                streaming_message: None,
-                pending_tool_calls: HashSet::new(),
-                error_message: None,
-            }),
-            api_registry: Some(registry),
-            ..Default::default()
         }
     }
 
