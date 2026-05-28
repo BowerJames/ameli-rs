@@ -51,9 +51,9 @@ pub use agent_session::{AgentSession, AgentSessionConfig};
 pub use error::SessionError;
 pub use extension::{
     BeforeAgentStartEvent, BeforeAgentStartMessage, BeforeAgentStartResult, CommandContext,
-    Extension, ExtensionApi, ExtensionContext, ExtensionError, ExtensionRunner, ExtensionWiring,
-    MessageEndResult, RegisteredCommand, SessionShutdownEvent, SessionShutdownReason,
-    SessionStartEvent, SessionStartReason, ToolExecutionUpdateEvent,
+    Extension, ExtensionApi, ExtensionContext, ExtensionError, ExtensionRunner, MessageEndResult,
+    RegisteredCommand, SessionShutdownEvent, SessionShutdownReason, SessionStartEvent,
+    SessionStartReason, ToolExecutionUpdateEvent,
 };
 pub use interface::{CustomNotifyMessage, Interface, NoopInterface, NotifyKind, NotifyMessage};
 pub use session_manager::{BranchSummaryData, SessionManager, SessionMetadata};
