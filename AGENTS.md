@@ -58,7 +58,7 @@ pi-coding-agent ships with built-in coding tools (file read/write, bash executio
 To launch an independent code review run:
 
 ```bash
-mypi --profile reviewer "/review <issue_number> <target_branch>"
+mypi --profile reviewer "/review <issue_number> <issue_branch>"
 ```
 
 # References
