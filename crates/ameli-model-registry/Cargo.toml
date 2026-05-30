@@ -9,7 +9,6 @@ license.workspace = true
 [dependencies]
 ameli-ai = { path = "../ameli-ai" }
 thiserror = { workspace = true }
-tracing = { workspace = true }
 
 [lints]
 workspace = true

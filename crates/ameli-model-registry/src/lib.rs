@@ -18,9 +18,10 @@
 //! # Example
 //!
 //! ```
-//! use ameli_model_registry::{DefaultModelRegistry, ModelRegistry};
+//! use ameli_model_registry::{DefaultModelRegistry, ModelRegistry, ModelNotFoundError};
 //! use ameli_ai::types::{Model, Cost, InputType};
 //!
+//! # fn main() -> Result<(), ModelNotFoundError> {
 //! let registry = DefaultModelRegistry::new();
 //!
 //! let model = Model {
@@ -40,8 +41,10 @@
 //!
 //! registry.register(model);
 //!
-//! let found = registry.get_model("openai", "gpt-4o").unwrap();
+//! let found = registry.get_model("openai", "gpt-4o")?;
 //! assert_eq!(found.id, "gpt-4o");
+//! # Ok(())
+//! # }
 //! ```
 
 use ameli_ai::types::Model;
