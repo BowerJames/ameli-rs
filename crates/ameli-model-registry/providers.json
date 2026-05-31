@@ -1,5 +1,12 @@
 [
   {
+    "id": "openai",
+    "modelsDevKey": "openai",
+    "baseUrl": "https://api.openai.com/v1",
+    "api": "openai-completions",
+    "compat": {}
+  },
+  {
     "id": "groq",
     "modelsDevKey": "groq",
     "baseUrl": "https://api.groq.com/openai/v1",
