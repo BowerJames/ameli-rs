@@ -2,7 +2,7 @@
 //! extensions, and the interface.
 //!
 //! [`AgentSession`] is the primary way downstream applications use the agent
-//! framework. It owns an [`ArcAgent`], a [`SessionManager`](crate::SessionManager),
+//! framework. It owns an [`ArcAgent`], a [`SessionManager`],
 //! an [`ExtensionRunner`](crate::ExtensionRunner), and an
 //! [`Interface`](crate::Interface), and provides:
 //!
@@ -50,14 +50,18 @@
 use crate::error::CreateAgentSessionError;
 use crate::extension::{init_extensions, Extension, ExtensionContext, ExtensionRunner};
 use crate::interface::Interface;
-use crate::session_manager::{SessionManager, SessionMetadata};
-use crate::types::{CustomMessageContent, ModelRef, SessionMessage};
-use ameli_agent_core::types::{AgentEvent, AgentMessage, AgentState, ThinkingLevel};
+use ameli_agent_core::types::{
+    AgentEvent, AgentMessage, AgentState, CustomAgentMessage, ThinkingLevel,
+};
 use ameli_agent_core::{AgentOptions, ArcAgent, Subscription};
-use ameli_ai::types::ImageContent;
+use ameli_ai::types::{ImageContent, MediaContentBlock, TextContent};
 use ameli_auth_storage::AuthStorage;
 use ameli_model_registry::ModelRegistry;
+use ameli_session_manager::{
+    CustomMessageContent, ModelRef, SessionContext, SessionManager, SessionMessage, SessionMetadata,
+};
 use std::collections::HashSet;
+use std::fmt;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -259,8 +263,7 @@ impl<M: SessionMetadata> AgentSession<M> {
     /// persisted to the session tree via the internal agent event subscription.
     ///
     /// The caller is responsible for ensuring session context has been restored
-    /// (e.g., via [`create_agent_session`](crate::create_agent_session)) before
-    /// calling this method.
+    /// (e.g., via [`create_agent_session`]) before calling this method.
     pub async fn prompt(
         &self,
         text: impl Into<String>,
@@ -289,14 +292,12 @@ impl<M: SessionMetadata> AgentSession<M> {
         if let Some(ref acc) = accumulated {
             if let Some(ref msgs) = acc.messages {
                 for msg in msgs {
-                    prompt_messages.push(
-                        crate::session_manager::custom_message_content_to_agent_message(
-                            &msg.custom_type,
-                            msg.content.clone(),
-                            msg.display,
-                            msg.details.clone(),
-                        ),
-                    );
+                    prompt_messages.push(custom_message_content_to_agent_message(
+                        &msg.custom_type,
+                        msg.content.clone(),
+                        msg.display,
+                        msg.details.clone(),
+                    ));
                 }
             }
         }
@@ -305,12 +306,10 @@ impl<M: SessionMetadata> AgentSession<M> {
         let user_msg = if images.is_empty() {
             ameli_ai::types::UserMessage::text(&text)
         } else {
-            let mut content: Vec<ameli_ai::types::MediaContentBlock> =
-                vec![ameli_ai::types::MediaContentBlock::Text(
-                    ameli_ai::types::TextContent::new(&text),
-                )];
+            let mut content: Vec<MediaContentBlock> =
+                vec![MediaContentBlock::Text(TextContent::new(&text))];
             for img in images {
-                content.push(ameli_ai::types::MediaContentBlock::Image(img));
+                content.push(MediaContentBlock::Image(img));
             }
             ameli_ai::types::UserMessage {
                 content: ameli_ai::types::UserContent::Blocks(content),
@@ -328,7 +327,7 @@ impl<M: SessionMetadata> AgentSession<M> {
     /// Continue from the current transcript.
     ///
     /// Delegates to the agent. The caller is responsible for ensuring session
-    /// context has been restored (e.g., via [`create_agent_session`](crate::create_agent_session))
+    /// context has been restored (e.g., via [`create_agent_session`])
     /// before calling this method.
     pub async fn continue_(&self) -> anyhow::Result<()> {
         self.agent.continue_().await
@@ -379,7 +378,7 @@ impl<M: SessionMetadata> AgentSession<M> {
     /// already-built context.
     async fn resolve_messages_from_context(
         &self,
-        session_ctx: &crate::types::SessionContext,
+        session_ctx: &SessionContext,
         cancel: CancellationToken,
     ) -> Vec<AgentMessage> {
         let mut messages = Vec::with_capacity(session_ctx.messages.len());
@@ -396,11 +395,7 @@ impl<M: SessionMetadata> AgentSession<M> {
                     match formatted {
                         Some(msg) => messages.push(msg),
                         None => {
-                            messages.push(
-                                crate::session_manager::compaction_summary_to_agent_message(
-                                    summary, *timestamp,
-                                ),
-                            );
+                            messages.push(compaction_summary_to_agent_message(summary, *timestamp));
                         }
                     }
                 }
@@ -412,9 +407,7 @@ impl<M: SessionMetadata> AgentSession<M> {
                     match formatted {
                         Some(msg) => messages.push(msg),
                         None => {
-                            messages.push(crate::session_manager::branch_summary_to_agent_message(
-                                summary, *timestamp,
-                            ));
+                            messages.push(branch_summary_to_agent_message(summary, *timestamp));
                         }
                     }
                 }
@@ -460,7 +453,117 @@ fn parse_thinking_level(s: &str) -> ThinkingLevel {
     }
 }
 
-use std::fmt;
+/// Convert a [`ThinkingLevel`] to its session storage string.
+fn thinking_level_to_str(level: ThinkingLevel) -> &'static str {
+    match level {
+        ThinkingLevel::Off => "off",
+        ThinkingLevel::Minimal => "minimal",
+        ThinkingLevel::Low => "low",
+        ThinkingLevel::Medium => "medium",
+        ThinkingLevel::High => "high",
+        ThinkingLevel::XHigh => "xhigh",
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Conversion helpers (relocated from session_manager module)
+// ---------------------------------------------------------------------------
+
+/// Extension-injected message content wrapped as a custom agent message.
+#[derive(Clone)]
+struct ExtensionCustomMessage {
+    custom_type: String,
+    content: CustomMessageContent,
+    display: bool,
+    details: Option<serde_json::Value>,
+}
+
+impl CustomAgentMessage for ExtensionCustomMessage {
+    fn message_type(&self) -> &str {
+        &self.custom_type
+    }
+    fn clone_boxed(&self) -> Box<dyn CustomAgentMessage> {
+        Box::new(self.clone())
+    }
+    fn to_json(&self) -> serde_json::Value {
+        let base = match &self.content {
+            CustomMessageContent::Text(t) => serde_json::json!({
+                "customType": self.custom_type,
+                "content": t,
+                "display": self.display,
+            }),
+            CustomMessageContent::Rich(blocks) => serde_json::json!({
+                "customType": self.custom_type,
+                "content": blocks,
+                "display": self.display,
+            }),
+        };
+        if let Some(details) = &self.details {
+            let mut map = base.as_object().cloned().unwrap_or_default();
+            map.insert("details".to_string(), details.clone());
+            serde_json::Value::Object(map)
+        } else {
+            base
+        }
+    }
+    fn fmt_debug(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ExtensionCustomMessage")
+            .field("custom_type", &self.custom_type)
+            .field("display", &self.display)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Convert a [`CustomMessageContent`] to an [`AgentMessage::Custom`].
+///
+/// Used by [`AgentSession`] to inject `before_agent_start` extension messages
+/// into the LLM context.
+fn custom_message_content_to_agent_message(
+    custom_type: &str,
+    content: CustomMessageContent,
+    display: bool,
+    details: Option<serde_json::Value>,
+) -> AgentMessage {
+    let ext_msg = ExtensionCustomMessage {
+        custom_type: custom_type.to_string(),
+        content,
+        display,
+        details,
+    };
+    AgentMessage::Custom(Box::new(ext_msg))
+}
+
+/// Default formatting for a compaction summary as a synthetic user message.
+///
+/// `AgentSession` uses this as the fallback when no extension overrides
+/// `on_format_compaction_summary`.
+fn compaction_summary_to_agent_message(summary: &str, timestamp: u64) -> AgentMessage {
+    let text = format!(
+        "The conversation history before this point was compacted into the following summary:\n\n\
+         <summary>\n{summary}\n</summary>",
+    );
+    let content = vec![MediaContentBlock::Text(TextContent::new(text))];
+    AgentMessage::User(ameli_ai::types::UserMessage {
+        content: ameli_ai::types::UserContent::Blocks(content),
+        timestamp,
+    })
+}
+
+/// Default formatting for a branch summary as a synthetic user message.
+///
+/// `AgentSession` uses this as the fallback when no extension overrides
+/// `on_format_branch_summary`.
+fn branch_summary_to_agent_message(summary: &str, timestamp: u64) -> AgentMessage {
+    let text = format!(
+        "The following is a summary of a branch that this conversation came back from:\n\n\
+         <summary>\n{summary}\n</summary>",
+    );
+    let content = vec![MediaContentBlock::Text(TextContent::new(text))];
+    AgentMessage::User(ameli_ai::types::UserMessage {
+        content: ameli_ai::types::UserContent::Blocks(content),
+        timestamp,
+    })
+}
 
 // ---------------------------------------------------------------------------
 // create_agent_session — factory function
@@ -536,24 +639,17 @@ impl<M: SessionMetadata> fmt::Debug for CreateAgentSessionResult<M> {
 /// ```no_run
 /// use ameli_agent::{
 ///     create_agent_session, CreateAgentSessionOptions, NoopInterface,
-///     SessionManager, SessionMetadata,
+///     SessionManager, SessionMetadata, InMemorySessionManager,
 /// };
-/// use ameli_agent::types::ModelRef;
+/// use ameli_agent::ModelRef;
 /// use ameli_auth_storage::InMemoryAuthStorage;
 /// use ameli_model_registry::DefaultModelRegistry;
 /// use std::sync::Arc;
 ///
-/// struct MyMetadata { id: String, created_at: String }
-/// impl SessionMetadata for MyMetadata {
-///     fn id(&self) -> &str { &self.id }
-///     fn created_at(&self) -> &str { &self.created_at }
-/// }
-///
-/// async fn example(
-///     session_manager: Arc<dyn SessionManager<MyMetadata>>,
-/// ) -> Result<(), ameli_agent::CreateAgentSessionError> {
+/// async fn example() -> Result<(), ameli_agent::CreateAgentSessionError> {
 ///     let auth_storage = Arc::new(InMemoryAuthStorage::new());
 ///     let model_registry = Arc::new(DefaultModelRegistry::new());
+///     let session_manager = Arc::new(InMemorySessionManager::new());
 ///
 ///     let result = create_agent_session(CreateAgentSessionOptions {
 ///         model: ModelRef { provider: "openai".into(), model_id: "gpt-4o".into() },
@@ -665,18 +761,6 @@ pub async fn create_agent_session<M: SessionMetadata>(
     })
 }
 
-/// Convert a [`ThinkingLevel`] to its session storage string.
-fn thinking_level_to_str(level: ThinkingLevel) -> &'static str {
-    match level {
-        ThinkingLevel::Off => "off",
-        ThinkingLevel::Minimal => "minimal",
-        ThinkingLevel::Low => "low",
-        ThinkingLevel::Medium => "medium",
-        ThinkingLevel::High => "high",
-        ThinkingLevel::XHigh => "xhigh",
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -686,28 +770,8 @@ mod tests {
     use super::*;
     use crate::extension::{Extension, ExtensionApi};
     use crate::interface::NoopInterface;
-    use crate::types::SessionContext;
-    use ameli_agent_core::types::{AgentState, ThinkingLevel};
     use ameli_ai::types::{Cost, InputType, Model};
-    use std::collections::HashSet;
-    use std::future::Future;
-    use std::pin::Pin;
-
-    /// A minimal session metadata for testing.
-    #[derive(Debug, Clone)]
-    struct TestMetadata {
-        id: String,
-        created_at: String,
-    }
-
-    impl SessionMetadata for TestMetadata {
-        fn id(&self) -> &str {
-            &self.id
-        }
-        fn created_at(&self) -> &str {
-            &self.created_at
-        }
-    }
+    use ameli_session_manager::{InMemoryMetadata, InMemorySessionManager, SessionEntry};
 
     fn test_model() -> Model {
         Model {
@@ -752,8 +816,8 @@ mod tests {
         fn init(&self, _api: &mut ExtensionApi) {}
     }
 
-    async fn test_session(agent: ArcAgent) -> AgentSession<TestMetadata> {
-        let session_manager = Arc::new(TestSessionManager::new());
+    async fn test_session(agent: ArcAgent) -> AgentSession<InMemoryMetadata> {
+        let session_manager = Arc::new(InMemorySessionManager::new());
         let runner = Arc::new(ExtensionRunner::from_extensions(&[Box::new(
             NoCommandsExtension,
         )]));
@@ -789,290 +853,7 @@ mod tests {
         session.shutdown().await;
     }
 
-    // -- Test SessionManager implementation ----------------------------------
-
-    /// A minimal in-memory session manager for testing.
-    struct TestSessionManager {
-        entries: std::sync::Mutex<Vec<crate::types::SessionEntry>>,
-    }
-
-    impl TestSessionManager {
-        fn new() -> Self {
-            Self {
-                entries: std::sync::Mutex::new(Vec::new()),
-            }
-        }
-    }
-
-    impl SessionManager<TestMetadata> for TestSessionManager {
-        fn metadata(
-            &self,
-        ) -> Pin<Box<dyn Future<Output = Result<TestMetadata, crate::SessionError>> + Send>>
-        {
-            Box::pin(async move {
-                Ok(TestMetadata {
-                    id: "test-session".into(),
-                    created_at: "2026-01-01T00:00:00Z".into(),
-                })
-            })
-        }
-
-        fn leaf_id(
-            &self,
-        ) -> Pin<Box<dyn Future<Output = Result<Option<String>, crate::SessionError>> + Send>>
-        {
-            let entries = self
-                .entries
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone();
-            Box::pin(async move { Ok(entries.last().map(|e| e.id().to_string())) })
-        }
-
-        fn entry(
-            &self,
-            _id: &str,
-        ) -> Pin<
-            Box<
-                dyn Future<Output = Result<Option<crate::types::SessionEntry>, crate::SessionError>>
-                    + Send,
-            >,
-        > {
-            Box::pin(async move { Ok(None) })
-        }
-
-        fn entries(
-            &self,
-        ) -> Pin<
-            Box<
-                dyn Future<Output = Result<Vec<crate::types::SessionEntry>, crate::SessionError>>
-                    + Send,
-            >,
-        > {
-            let entries = self
-                .entries
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone();
-            Box::pin(async move { Ok(entries) })
-        }
-
-        fn branch(
-            &self,
-            from_id: Option<&str>,
-        ) -> Pin<
-            Box<
-                dyn Future<Output = Result<Vec<crate::types::SessionEntry>, crate::SessionError>>
-                    + Send,
-            >,
-        > {
-            let entries = self
-                .entries
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone();
-            Box::pin(async move {
-                let _ = from_id;
-                Ok(entries)
-            })
-        }
-
-        fn build_context(
-            &self,
-        ) -> Pin<Box<dyn Future<Output = Result<SessionContext, crate::SessionError>> + Send>>
-        {
-            let entries = self
-                .entries
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone();
-            Box::pin(async move {
-                // Simple context building for tests: convert MessageEntry to
-                // SessionMessage::Agent, default thinking_level and model.
-                let mut messages = Vec::new();
-                let mut thinking_level = "off".to_string();
-                let mut model: Option<crate::types::ModelRef> = None;
-                for entry in &entries {
-                    match entry {
-                        crate::types::SessionEntry::Message(e) => {
-                            messages.push(crate::types::SessionMessage::Agent(Box::new(
-                                e.message.clone(),
-                            )));
-                        }
-                        crate::types::SessionEntry::ThinkingLevelChange(e) => {
-                            thinking_level = e.thinking_level.clone();
-                        }
-                        crate::types::SessionEntry::ModelChange(e) => {
-                            model = Some(crate::types::ModelRef {
-                                provider: e.provider.clone(),
-                                model_id: e.model_id.clone(),
-                            });
-                        }
-                        _ => {}
-                    }
-                }
-                Ok(crate::types::SessionContext {
-                    messages,
-                    thinking_level,
-                    model,
-                })
-            })
-        }
-
-        fn label(
-            &self,
-            _id: &str,
-        ) -> Pin<Box<dyn Future<Output = Result<Option<String>, crate::SessionError>> + Send>>
-        {
-            Box::pin(async move { Ok(None) })
-        }
-
-        fn append_message(
-            &self,
-            message: AgentMessage,
-        ) -> Pin<Box<dyn Future<Output = Result<String, crate::SessionError>> + Send>> {
-            let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
-            let id = format!("entry-{}", entries.len());
-            let parent_id = entries.last().map(|e| e.id().to_string());
-            entries.push(crate::types::SessionEntry::Message(
-                crate::types::MessageEntry {
-                    id: id.clone(),
-                    parent_id,
-                    timestamp: chrono::Utc::now()
-                        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-                    message,
-                },
-            ));
-            Box::pin(async move { Ok(id) })
-        }
-
-        fn append_thinking_level_change(
-            &self,
-            thinking_level: &str,
-        ) -> Pin<Box<dyn Future<Output = Result<String, crate::SessionError>> + Send>> {
-            let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
-            let id = format!("entry-{}", entries.len());
-            let parent_id = entries.last().map(|e| e.id().to_string());
-            entries.push(crate::types::SessionEntry::ThinkingLevelChange(
-                crate::types::ThinkingLevelChangeEntry {
-                    id: id.clone(),
-                    parent_id,
-                    timestamp: chrono::Utc::now()
-                        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-                    thinking_level: thinking_level.to_string(),
-                },
-            ));
-            Box::pin(async move { Ok(id) })
-        }
-
-        fn append_model_change(
-            &self,
-            provider: &str,
-            model_id: &str,
-        ) -> Pin<Box<dyn Future<Output = Result<String, crate::SessionError>> + Send>> {
-            let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
-            let id = format!("entry-{}", entries.len());
-            let parent_id = entries.last().map(|e| e.id().to_string());
-            entries.push(crate::types::SessionEntry::ModelChange(
-                crate::types::ModelChangeEntry {
-                    id: id.clone(),
-                    parent_id,
-                    timestamp: chrono::Utc::now()
-                        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-                    provider: provider.to_string(),
-                    model_id: model_id.to_string(),
-                },
-            ));
-            Box::pin(async move { Ok(id) })
-        }
-
-        fn append_compaction(
-            &self,
-            summary: &str,
-            first_kept_entry_id: &str,
-            tokens_before: u64,
-            details: Option<serde_json::Value>,
-            from_hook: bool,
-        ) -> Pin<Box<dyn Future<Output = Result<String, crate::SessionError>> + Send>> {
-            let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
-            let id = format!("entry-{}", entries.len());
-            let parent_id = entries.last().map(|e| e.id().to_string());
-            entries.push(crate::types::SessionEntry::Compaction(
-                crate::types::CompactionEntry {
-                    id: id.clone(),
-                    parent_id,
-                    timestamp: chrono::Utc::now()
-                        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-                    summary: summary.to_string(),
-                    first_kept_entry_id: first_kept_entry_id.to_string(),
-                    tokens_before,
-                    details,
-                    from_hook,
-                },
-            ));
-            Box::pin(async move { Ok(id) })
-        }
-
-        fn append_custom_entry(
-            &self,
-            custom_type: &str,
-            data: Option<serde_json::Value>,
-        ) -> Pin<Box<dyn Future<Output = Result<String, crate::SessionError>> + Send>> {
-            let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
-            let id = format!("entry-{}", entries.len());
-            let parent_id = entries.last().map(|e| e.id().to_string());
-            entries.push(crate::types::SessionEntry::Custom(
-                crate::types::CustomEntry {
-                    id: id.clone(),
-                    parent_id,
-                    timestamp: chrono::Utc::now()
-                        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-                    custom_type: custom_type.to_string(),
-                    data,
-                },
-            ));
-            Box::pin(async move { Ok(id) })
-        }
-
-        fn append_custom_message_entry(
-            &self,
-            custom_type: &str,
-            content: crate::types::CustomMessageContent,
-            display: bool,
-            details: Option<serde_json::Value>,
-        ) -> Pin<Box<dyn Future<Output = Result<String, crate::SessionError>> + Send>> {
-            let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
-            let id = format!("entry-{}", entries.len());
-            let parent_id = entries.last().map(|e| e.id().to_string());
-            entries.push(crate::types::SessionEntry::CustomMessage(
-                crate::types::CustomMessageEntry {
-                    id: id.clone(),
-                    parent_id,
-                    timestamp: chrono::Utc::now()
-                        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-                    custom_type: custom_type.to_string(),
-                    content,
-                    display,
-                    details,
-                },
-            ));
-            Box::pin(async move { Ok(id) })
-        }
-
-        fn move_to(
-            &self,
-            entry_id: Option<&str>,
-            summary: Option<crate::BranchSummaryData>,
-        ) -> Pin<Box<dyn Future<Output = Result<Option<String>, crate::SessionError>> + Send>>
-        {
-            let _ = (entry_id, summary);
-            Box::pin(async move { Ok(None) })
-        }
-    }
-
     // -- Session context resolution tests -----------------------------------
-
-    use crate::types::SessionMessage;
 
     #[tokio::test]
     async fn resolve_messages_from_context_empty() {
@@ -1134,7 +915,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_agent_session_restores_messages_from_existing_session() {
-        let sm = Arc::new(TestSessionManager::new());
+        let sm = Arc::new(InMemorySessionManager::new());
 
         // Pre-populate session with messages
         sm.append_message(AgentMessage::User(ameli_ai::types::UserMessage::text(
@@ -1184,7 +965,7 @@ mod tests {
         let entries = sm.entries().await.unwrap();
         let model_changes: Vec<_> = entries
             .iter()
-            .filter(|e| matches!(e, crate::types::SessionEntry::ModelChange(_)))
+            .filter(|e| matches!(e, SessionEntry::ModelChange(_)))
             .collect();
         assert_eq!(
             model_changes.len(),
@@ -1195,7 +976,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_agent_session_restores_thinking_level_from_existing_session() {
-        let sm = Arc::new(TestSessionManager::new());
+        let sm = Arc::new(InMemorySessionManager::new());
 
         // Pre-populate with a message and thinking level change
         sm.append_message(AgentMessage::User(ameli_ai::types::UserMessage::text(
@@ -1269,14 +1050,14 @@ mod tests {
 
     #[tokio::test]
     async fn persist_standard_message_appends_to_session() {
-        let sm: Arc<dyn SessionManager<TestMetadata>> = Arc::new(TestSessionManager::new());
+        let sm: Arc<dyn SessionManager<InMemoryMetadata>> = Arc::new(InMemorySessionManager::new());
 
         let msg = AgentMessage::User(ameli_ai::types::UserMessage::text("hello"));
         persist_message(&msg, &sm).await;
 
         let entries = sm.entries().await.unwrap();
         assert_eq!(entries.len(), 1);
-        if let crate::types::SessionEntry::Message(me) = &entries[0] {
+        if let SessionEntry::Message(me) = &entries[0] {
             assert_eq!(me.message.role(), "user");
         } else {
             panic!("Expected Message entry");
@@ -1285,9 +1066,9 @@ mod tests {
 
     #[tokio::test]
     async fn persist_custom_message_appends_to_session() {
-        let sm: Arc<dyn SessionManager<TestMetadata>> = Arc::new(TestSessionManager::new());
+        let sm: Arc<dyn SessionManager<InMemoryMetadata>> = Arc::new(InMemorySessionManager::new());
 
-        let msg = crate::session_manager::custom_message_content_to_agent_message(
+        let msg = custom_message_content_to_agent_message(
             "context",
             CustomMessageContent::Text("some context".into()),
             true,
@@ -1297,7 +1078,7 @@ mod tests {
 
         let entries = sm.entries().await.unwrap();
         assert_eq!(entries.len(), 1);
-        if let crate::types::SessionEntry::CustomMessage(cme) = &entries[0] {
+        if let SessionEntry::CustomMessage(cme) = &entries[0] {
             assert_eq!(cme.custom_type, "context");
             assert!(cme.display);
         } else {
@@ -1307,7 +1088,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_agent_event_persists_message_end() {
-        let sm: Arc<dyn SessionManager<TestMetadata>> = Arc::new(TestSessionManager::new());
+        let sm: Arc<dyn SessionManager<InMemoryMetadata>> = Arc::new(InMemorySessionManager::new());
         let runner = Arc::new(ExtensionRunner::from_extensions(&[]));
 
         let event = AgentEvent::MessageEnd {
@@ -1317,7 +1098,7 @@ mod tests {
 
         let entries = sm.entries().await.unwrap();
         assert_eq!(entries.len(), 1);
-        if let crate::types::SessionEntry::Message(me) = &entries[0] {
+        if let SessionEntry::Message(me) = &entries[0] {
             assert_eq!(me.message.role(), "user");
         } else {
             panic!("Expected Message entry");
@@ -1352,7 +1133,7 @@ mod tests {
             },
             model_registry: test_model_registry(),
             auth_storage: test_auth_storage(),
-            session_manager: Arc::new(TestSessionManager::new()),
+            session_manager: Arc::new(InMemorySessionManager::new()),
             interface: Arc::new(NoopInterface),
             extensions: vec![],
             thinking_level: None,
@@ -1375,7 +1156,7 @@ mod tests {
             },
             model_registry: test_model_registry(),
             auth_storage: test_auth_storage(),
-            session_manager: Arc::new(TestSessionManager::new()),
+            session_manager: Arc::new(InMemorySessionManager::new()),
             interface: Arc::new(NoopInterface),
             extensions: vec![],
             thinking_level: None,
@@ -1400,7 +1181,7 @@ mod tests {
             },
             model_registry: test_model_registry(),
             auth_storage,
-            session_manager: Arc::new(TestSessionManager::new()),
+            session_manager: Arc::new(InMemorySessionManager::new()),
             interface: Arc::new(NoopInterface),
             extensions: vec![],
             thinking_level: None,
@@ -1424,7 +1205,7 @@ mod tests {
             },
             model_registry: test_model_registry(),
             auth_storage: test_auth_storage(),
-            session_manager: Arc::new(TestSessionManager::new()),
+            session_manager: Arc::new(InMemorySessionManager::new()),
             interface: Arc::new(NoopInterface),
             extensions: vec![],
             thinking_level: Some(ThinkingLevel::High),
@@ -1441,7 +1222,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_agent_session_persists_model_for_new_session() {
-        let sm = Arc::new(TestSessionManager::new());
+        let sm = Arc::new(InMemorySessionManager::new());
 
         let result = create_agent_session(CreateAgentSessionOptions {
             model: ModelRef {
@@ -1466,11 +1247,11 @@ mod tests {
         // Should have a model_change and thinking_level_change entry
         let model_changes: Vec<_> = entries
             .iter()
-            .filter(|e| matches!(e, crate::types::SessionEntry::ModelChange(_)))
+            .filter(|e| matches!(e, SessionEntry::ModelChange(_)))
             .collect();
         let thinking_changes: Vec<_> = entries
             .iter()
-            .filter(|e| matches!(e, crate::types::SessionEntry::ThinkingLevelChange(_)))
+            .filter(|e| matches!(e, SessionEntry::ThinkingLevelChange(_)))
             .collect();
         assert_eq!(model_changes.len(), 1);
         assert_eq!(thinking_changes.len(), 1);
@@ -1493,7 +1274,7 @@ mod tests {
             },
             model_registry: test_model_registry(),
             auth_storage: test_auth_storage(),
-            session_manager: Arc::new(TestSessionManager::new()),
+            session_manager: Arc::new(InMemorySessionManager::new()),
             interface: Arc::new(NoopInterface),
             extensions: vec![Box::new(TestExtension)],
             thinking_level: None,

@@ -14,6 +14,7 @@ ameli-agent-core = { path = "../ameli-agent-core" }
 ameli-ai = { path = "../ameli-ai" }
 ameli-auth-storage = { path = "../ameli-auth-storage" }
 ameli-model-registry = { path = "../ameli-model-registry" }
+ameli-session-manager = { path = "../ameli-session-manager" }
 
 # External crates inherited from the root workspace
 anyhow = { workspace = true }
@@ -22,5 +23,4 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { version = "0.7", features = ["rt"] }
-chrono = { version = "0.4", features = ["serde"] }
 tracing = { workspace = true }
