@@ -47,8 +47,11 @@ pub mod session_manager;
 pub mod types;
 
 // Re-export primary types for convenience.
-pub use agent_session::{AgentSession, AgentSessionConfig};
-pub use error::SessionError;
+pub use agent_session::{
+    create_agent_session, AgentSession, AgentSessionConfig, CreateAgentSessionOptions,
+    CreateAgentSessionResult,
+};
+pub use error::{CreateAgentSessionError, SessionError};
 pub use extension::{
     BeforeAgentStartEvent, BeforeAgentStartMessage, BeforeAgentStartResult, CommandContext,
     Extension, ExtensionApi, ExtensionContext, ExtensionError, ExtensionRunner, MessageEndResult,

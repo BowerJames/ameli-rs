@@ -31,6 +31,8 @@ version = "0.1.0"
 dependencies = [
  "ameli-agent-core",
  "ameli-ai",
+ "ameli-auth-storage",
+ "ameli-model-registry",
  "anyhow",
  "chrono",
  "serde",

@@ -12,6 +12,8 @@ rust-version.workspace = true
 # Workspace crates
 ameli-agent-core = { path = "../ameli-agent-core" }
 ameli-ai = { path = "../ameli-ai" }
+ameli-auth-storage = { path = "../ameli-auth-storage" }
+ameli-model-registry = { path = "../ameli-model-registry" }
 
 # External crates inherited from the root workspace
 anyhow = { workspace = true }

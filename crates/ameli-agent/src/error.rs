@@ -1,8 +1,8 @@
-//! Session error types.
+//! Session error types and agent session creation errors.
 //!
 //! Defines [`SessionError`] — the domain-specific error enum for session
-//! operations. Callers can match on variants for targeted error handling
-//! (e.g., "not found" → show session picker, "storage" → show retry dialog).
+//! operations — and [`CreateAgentSessionError`] for failures during
+//! [`create_agent_session`](crate::create_agent_session).
 
 /// Errors produced by session storage, context building, and tree operations.
 #[derive(Debug, thiserror::Error)]
@@ -53,6 +53,33 @@ impl SessionError {
     pub fn storage(err: impl std::error::Error + Send + Sync + 'static) -> Self {
         Self::Storage(Box::new(err))
     }
+}
+
+// ---------------------------------------------------------------------------
+// CreateAgentSessionError
+// ---------------------------------------------------------------------------
+
+/// Errors produced by [`create_agent_session`](crate::create_agent_session).
+///
+/// Covers model resolution failures, missing API keys, and session storage
+/// errors encountered while constructing a fully loaded [`AgentSession`].
+#[derive(Debug, thiserror::Error)]
+pub enum CreateAgentSessionError {
+    /// The requested model was not found in the model registry.
+    #[error("model not found: {0}")]
+    ModelNotFound(#[from] ameli_model_registry::ModelNotFoundError),
+
+    /// No API key was available for the requested provider.
+    #[error("no API key found for provider: {provider}")]
+    ApiKeyNotFound {
+        /// Provider name that had no key.
+        provider: String,
+    },
+
+    /// A session storage error occurred during context restoration or
+    /// initial state persistence.
+    #[error("session error: {0}")]
+    Session(#[from] SessionError),
 }
 
 // ---------------------------------------------------------------------------
