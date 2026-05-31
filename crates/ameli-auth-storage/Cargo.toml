@@ -10,6 +10,7 @@ license.workspace = true
 thiserror = { workspace = true }
 
 [dev-dependencies]
+temp-env = "0.3"
 tokio = { workspace = true }
 
 [lints]

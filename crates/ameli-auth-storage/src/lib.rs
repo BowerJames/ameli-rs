@@ -391,70 +391,69 @@ mod tests {
     #[test]
     fn env_fallback_when_no_in_memory_key() {
         let storage = InMemoryAuthStorage::new();
-
-        // Set an env var for this test
-        let env_key = "AMELI_TEST_AUTH_STORAGE_PROVIDER_API_KEY";
         let test_value = "test-api-key-from-env";
-        std::env::set_var(env_key, test_value);
 
-        let result = storage.get_api_key_sync("ameli_test_auth_storage_provider");
-        std::env::remove_var(env_key);
-
-        assert_eq!(result.unwrap(), test_value);
+        temp_env::with_var(
+            "AMELI_TEST_AUTH_STORAGE_PROVIDER_API_KEY",
+            Some(test_value),
+            || {
+                let result = storage.get_api_key_sync("ameli_test_auth_storage_provider");
+                assert_eq!(result.unwrap(), test_value);
+            },
+        );
     }
 
     #[test]
     fn in_memory_takes_precedence_over_env() {
         let storage = InMemoryAuthStorage::new();
-
-        let env_key = "AMELI_TEST_PRECEDENCE_PROVIDER_API_KEY";
-        std::env::set_var(env_key, "from-env");
         storage.set_api_key("ameli_test_precedence_provider", "from-memory".to_string());
 
-        let result = storage.get_api_key_sync("ameli_test_precedence_provider");
-        std::env::remove_var(env_key);
-
-        assert_eq!(result.unwrap(), "from-memory");
+        temp_env::with_var(
+            "AMELI_TEST_PRECEDENCE_PROVIDER_API_KEY",
+            Some("from-env"),
+            || {
+                let result = storage.get_api_key_sync("ameli_test_precedence_provider");
+                assert_eq!(result.unwrap(), "from-memory");
+            },
+        );
     }
 
     #[test]
     fn empty_env_var_is_ignored() {
         let storage = InMemoryAuthStorage::new();
 
-        let env_key = "AMELI_TEST_EMPTY_ENV_PROVIDER_API_KEY";
-        std::env::set_var(env_key, "");
-
-        let result = storage.get_api_key_sync("ameli_test_empty_env_provider");
-        std::env::remove_var(env_key);
-
-        assert!(result.is_err());
+        temp_env::with_var("AMELI_TEST_EMPTY_ENV_PROVIDER_API_KEY", Some(""), || {
+            let result = storage.get_api_key_sync("ameli_test_empty_env_provider");
+            assert!(result.is_err());
+        });
     }
 
     #[test]
     fn remove_key_falls_back_to_env() {
         let storage = InMemoryAuthStorage::new();
-
-        let env_key = "AMELI_TEST_FALLBACK_PROVIDER_API_KEY";
-        std::env::set_var(env_key, "env-value");
         storage.set_api_key("ameli_test_fallback_provider", "mem-value".to_string());
 
-        // Before removal, in-memory wins
-        assert_eq!(
-            storage
-                .get_api_key_sync("ameli_test_fallback_provider")
-                .unwrap(),
-            "mem-value"
-        );
+        temp_env::with_var(
+            "AMELI_TEST_FALLBACK_PROVIDER_API_KEY",
+            Some("env-value"),
+            || {
+                // Before removal, in-memory wins
+                assert_eq!(
+                    storage
+                        .get_api_key_sync("ameli_test_fallback_provider")
+                        .unwrap(),
+                    "mem-value"
+                );
 
-        // After removal, falls back to env
-        storage.remove_api_key("ameli_test_fallback_provider");
-        assert_eq!(
-            storage
-                .get_api_key_sync("ameli_test_fallback_provider")
-                .unwrap(),
-            "env-value"
+                // After removal, falls back to env
+                storage.remove_api_key("ameli_test_fallback_provider");
+                assert_eq!(
+                    storage
+                        .get_api_key_sync("ameli_test_fallback_provider")
+                        .unwrap(),
+                    "env-value"
+                );
+            },
         );
-
-        std::env::remove_var(env_key);
     }
 }
