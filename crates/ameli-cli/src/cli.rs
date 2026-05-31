@@ -1,16 +1,12 @@
 //! Top-level CLI definitions and command dispatch for the `ameli` binary.
 //!
-//! Uses clap derive to define the command hierarchy:
-//!
 //! ```text
 //! ameli
-//!  └── ai
-//!       └── complete   — single-shot LLM completion
+//!  └── complete   — single-shot LLM completion
 //! ```
 
 use ameli_ai::types::{
-    AssistantContentBlock, Context, Cost, InputType, Message, Model, StreamOptions, TextContent,
-    UserMessage,
+    AssistantContentBlock, Context, Message, StreamOptions, TextContent, UserMessage,
 };
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
@@ -35,49 +31,35 @@ pub struct Cli {
 /// Top-level subcommands.
 #[derive(Debug, Subcommand)]
 pub enum Commands {
-    /// Interact with the ameli AI layer.
-    Ai {
-        #[command(subcommand)]
-        command: AiSubcommand,
-    },
-}
-
-/// Subcommands under `ameli ai`.
-#[derive(Debug, Subcommand)]
-pub enum AiSubcommand {
     /// Perform a single-shot LLM completion and print the result.
     Complete(CompleteArgs),
 }
 
 // ---------------------------------------------------------------------------
-// `ameli ai complete` arguments
+// `ameli complete` arguments
 // ---------------------------------------------------------------------------
 
-/// Arguments for `ameli ai complete`.
+/// Arguments for `ameli complete`.
 #[derive(Debug, Parser)]
 pub struct CompleteArgs {
+    /// Provider name (e.g. "openai", "anthropic").
+    #[arg(long)]
+    pub provider: String,
+
     /// Model ID (e.g. "gpt-4o").
     #[arg(long)]
     pub model: String,
-
-    /// Provider name (e.g. "openai").
-    #[arg(long, default_value = "openai")]
-    pub provider: String,
-
-    /// Override the API base URL.
-    #[arg(long, default_value = "https://api.openai.com/v1")]
-    pub base_url: String,
 
     /// API key. Falls back to <PROVIDER>_API_KEY or OPENAI_API_KEY env vars if not set.
     #[arg(long)]
     pub api_key: Option<String>,
 
     /// System prompt to include with the request.
-    #[arg(long)]
-    pub system_prompt: Option<String>,
+    #[arg(long, default_value = "You are a helpful assistant")]
+    pub system_prompt: String,
 
     /// Output the full AssistantMessage as JSON instead of text only.
-    #[arg(long)]
+    #[arg(long, default_value_t = false)]
     pub json: bool,
 
     /// The prompt text. Reads from stdin if not provided and stdin is piped.
@@ -92,43 +74,31 @@ pub struct CompleteArgs {
 /// Parse CLI arguments and dispatch to the appropriate command handler.
 pub async fn run(cli: Cli) -> Result<()> {
     match cli.command {
-        Commands::Ai { command } => match command {
-            AiSubcommand::Complete(args) => run_complete(args).await,
-        },
+        Commands::Complete(args) => run_complete(args).await,
     }
 }
 
 // ---------------------------------------------------------------------------
-// `ameli ai complete` implementation
+// `ameli complete` implementation
 // ---------------------------------------------------------------------------
 
 /// Execute a single-shot completion and print the result.
 async fn run_complete(args: CompleteArgs) -> Result<()> {
     let prompt = resolve_prompt(&args.prompt)?;
 
-    let model = Model {
-        id: args.model.clone(),
-        name: args.model,
-        api: "openai-completions".into(),
-        provider: args.provider.clone(),
-        base_url: args.base_url,
-        reasoning: false,
-        thinking_level_map: None,
-        input: vec![InputType::Text],
-        cost: Cost::default(),
-        context_window: 128_000,
-        max_tokens: 16_384,
-        compat: None,
-    };
+    let model = ameli_model_registry::get_model(&args.provider, &args.model)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let api_key = resolve_api_key(&args.provider, args.api_key);
 
     let context = Context {
-        system_prompt: args.system_prompt,
+        system_prompt: Some(args.system_prompt),
         messages: vec![Message::User(UserMessage::text(prompt))],
         tools: None,
     };
 
     let options = StreamOptions {
-        api_key: args.api_key,
+        api_key,
         ..Default::default()
     };
 
@@ -191,4 +161,31 @@ fn resolve_prompt(arg: &Option<String>) -> Result<String> {
     }
 
     bail!("No prompt provided. Pass a positional argument or pipe to stdin. Use --help for usage.");
+}
+
+/// Resolve API key from flag or environment variable fallback.
+///
+/// Tries in order:
+/// 1. Explicit `--api-key` flag
+/// 2. `<PROVIDER>_API_KEY` env var (e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`)
+/// 3. `OPENAI_API_KEY` env var as a generic fallback
+fn resolve_api_key(provider: &str, flag: Option<String>) -> Option<String> {
+    if flag.is_some() {
+        return flag;
+    }
+
+    let env_name = format!("{}_API_KEY", provider.to_uppercase());
+    if let Ok(key) = std::env::var(&env_name) {
+        if !key.is_empty() {
+            return Some(key);
+        }
+    }
+
+    if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+        if !key.is_empty() {
+            return Some(key);
+        }
+    }
+
+    None
 }
