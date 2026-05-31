@@ -47,7 +47,7 @@
 //! }
 //! ```
 
-use crate::error::{CreateAgentSessionError, SessionError};
+use crate::error::CreateAgentSessionError;
 use crate::extension::{init_extensions, Extension, ExtensionContext, ExtensionRunner};
 use crate::interface::Interface;
 use crate::session_manager::{SessionManager, SessionMetadata};
@@ -255,16 +255,18 @@ impl<M: SessionMetadata> AgentSession<M> {
 
     /// Send a prompt to the agent.
     ///
-    /// Resolves the session context, emits `before_agent_start`, and
-    /// delegates to the agent. Messages are persisted to the session tree
-    /// via the internal agent event subscription.
+    /// Emits `before_agent_start`, and delegates to the agent. Messages are
+    /// persisted to the session tree via the internal agent event subscription.
+    ///
+    /// The caller is responsible for ensuring session context has been restored
+    /// (e.g., via [`create_agent_session`](crate::create_agent_session)) before
+    /// calling this method.
     pub async fn prompt(
         &self,
         text: impl Into<String>,
         images: Vec<ImageContent>,
     ) -> anyhow::Result<()> {
         let text = text.into();
-        self.restore_session_context().await?;
 
         // Emit before_agent_start and collect results.
         let system_prompt = self.get_current_system_prompt().await;
@@ -325,9 +327,10 @@ impl<M: SessionMetadata> AgentSession<M> {
 
     /// Continue from the current transcript.
     ///
-    /// Resolves session context and delegates to the agent.
+    /// Delegates to the agent. The caller is responsible for ensuring session
+    /// context has been restored (e.g., via [`create_agent_session`](crate::create_agent_session))
+    /// before calling this method.
     pub async fn continue_(&self) -> anyhow::Result<()> {
-        self.restore_session_context().await?;
         self.agent.continue_().await
     }
 
@@ -369,14 +372,16 @@ impl<M: SessionMetadata> AgentSession<M> {
     // Session context resolution
     // -----------------------------------------------------------------------
 
-    /// Resolve session context into `AgentMessage`s, using extension hooks
-    /// for compaction and branch summary formatting.
-    async fn resolve_session_messages(
+    /// Convert `SessionMessage`s from a pre-built context into `AgentMessage`s,
+    /// consulting extension hooks for compaction and branch summary formatting.
+    ///
+    /// This does **not** call `build_context()` — the caller provides the
+    /// already-built context.
+    async fn resolve_messages_from_context(
         &self,
+        session_ctx: &crate::types::SessionContext,
         cancel: CancellationToken,
-    ) -> Result<(Vec<AgentMessage>, String, Option<crate::types::ModelRef>), SessionError> {
-        let session_ctx = self.session_manager.build_context().await?;
-
+    ) -> Vec<AgentMessage> {
         let mut messages = Vec::with_capacity(session_ctx.messages.len());
         for session_msg in &session_ctx.messages {
             match session_msg {
@@ -415,29 +420,7 @@ impl<M: SessionMetadata> AgentSession<M> {
                 }
             }
         }
-
-        Ok((messages, session_ctx.thinking_level, session_ctx.model))
-    }
-
-    /// Restore session context onto the agent state.
-    ///
-    /// Resolves the session tree into messages and updates the agent state.
-    /// Restores messages, system prompt, and thinking level. Model restoration
-    /// is a downstream concern (requires a model registry to resolve
-    /// `ModelRef` → `Model`).
-    async fn restore_session_context(&self) -> Result<(), SessionError> {
-        let (messages, thinking_level, _model_ref) = self
-            .resolve_session_messages(CancellationToken::new())
-            .await?;
-
-        // Restore transcript.
-        self.agent.set_messages(messages).await;
-
-        // Restore thinking level from session (parse string, fallback to Off).
-        let level = parse_thinking_level(&thinking_level);
-        self.agent.set_thinking_level(level).await;
-
-        Ok(())
+        messages
     }
 
     /// Get the current system prompt from agent state.
@@ -658,11 +641,11 @@ pub async fn create_agent_session<M: SessionMetadata>(
 
     if has_existing_session {
         // Existing session: restore messages and thinking level.
-        let (messages, thinking_level_str, _model_ref) = session
-            .resolve_session_messages(CancellationToken::new())
-            .await?;
+        let messages = session
+            .resolve_messages_from_context(&session_ctx, CancellationToken::new())
+            .await;
         session.agent.set_messages(messages).await;
-        let level = parse_thinking_level(&thinking_level_str);
+        let level = parse_thinking_level(&session_ctx.thinking_level);
         session.agent.set_thinking_level(level).await;
     } else {
         // New session: persist initial model and thinking level.
@@ -1089,99 +1072,71 @@ mod tests {
 
     // -- Session context resolution tests -----------------------------------
 
+    use crate::types::SessionMessage;
+
     #[tokio::test]
-    async fn resolve_session_messages_empty() {
+    async fn resolve_messages_from_context_empty() {
         let agent = test_agent();
         let session = test_session(agent).await;
 
-        let (messages, thinking_level, model) = session
-            .resolve_session_messages(CancellationToken::new())
-            .await
-            .unwrap();
-
+        let ctx = SessionContext {
+            messages: vec![],
+            thinking_level: "off".into(),
+            model: None,
+        };
+        let messages = session
+            .resolve_messages_from_context(&ctx, CancellationToken::new())
+            .await;
         assert!(messages.is_empty());
-        assert_eq!(thinking_level, "off");
-        assert!(model.is_none());
     }
 
     #[tokio::test]
-    async fn resolve_session_messages_with_messages() {
+    async fn resolve_messages_from_context_with_agent_message() {
         let agent = test_agent();
-        let sm = Arc::new(TestSessionManager::new());
+        let session = test_session(agent).await;
 
-        // Append a user message to the session
-        sm.append_message(AgentMessage::User(ameli_ai::types::UserMessage::text(
-            "hello",
-        )))
-        .await
-        .unwrap();
-
-        let runner = Arc::new(ExtensionRunner::from_extensions(&[Box::new(
-            NoCommandsExtension,
-        )]));
-        let session = AgentSession::new(AgentSessionConfig {
-            agent,
-            session_manager: sm,
-            runner,
-            interface: Arc::new(NoopInterface),
-        })
-        .await;
-
-        let (messages, _, _) = session
-            .resolve_session_messages(CancellationToken::new())
-            .await
-            .unwrap();
-
+        let ctx = SessionContext {
+            messages: vec![SessionMessage::Agent(Box::new(AgentMessage::User(
+                ameli_ai::types::UserMessage::text("hello"),
+            )))],
+            thinking_level: "off".into(),
+            model: None,
+        };
+        let messages = session
+            .resolve_messages_from_context(&ctx, CancellationToken::new())
+            .await;
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].role(), "user");
     }
 
     #[tokio::test]
-    async fn resolve_session_messages_with_compaction_default() {
+    async fn resolve_messages_from_context_with_compaction_default() {
         let agent = test_agent();
-        let sm = Arc::new(TestSessionManager::new());
-
-        // Append a message then a compaction
-        let entry_id = sm
-            .append_message(AgentMessage::User(ameli_ai::types::UserMessage::text(
-                "old message",
-            )))
-            .await
-            .unwrap();
-        sm.append_compaction("summary of old", &entry_id, 1000, None, false)
-            .await
-            .unwrap();
+        let session = test_session(agent).await;
 
         // No format_compaction_summary handlers → default formatting
-        let runner = Arc::new(ExtensionRunner::from_extensions(&[]));
-        let session = AgentSession::new(AgentSessionConfig {
-            agent,
-            session_manager: sm,
-            runner,
-            interface: Arc::new(NoopInterface),
-        })
-        .await;
-
-        let (messages, _, _) = session
-            .resolve_session_messages(CancellationToken::new())
-            .await
-            .unwrap();
-
-        // Expect: compaction summary (default) + kept message
-        assert!(messages.len() >= 1);
-        // First message should be the compaction summary (a user message wrapping the summary)
-        let first = &messages[0];
-        assert_eq!(first.role(), "user");
+        let ctx = SessionContext {
+            messages: vec![SessionMessage::Compaction {
+                summary: "summary of old".into(),
+                timestamp: 1000,
+            }],
+            thinking_level: "off".into(),
+            model: None,
+        };
+        let messages = session
+            .resolve_messages_from_context(&ctx, CancellationToken::new())
+            .await;
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role(), "user");
     }
 
     // -- State mutation wiring tests -------------------------------------------
 
     #[tokio::test]
-    async fn restore_session_context_sets_messages() {
-        let _agent = test_agent();
+    async fn create_agent_session_restores_messages_from_existing_session() {
         let sm = Arc::new(TestSessionManager::new());
 
-        // Append messages to session
+        // Pre-populate session with messages
         sm.append_message(AgentMessage::User(ameli_ai::types::UserMessage::text(
             "hello",
         )))
@@ -1192,7 +1147,7 @@ mod tests {
                 ameli_ai::types::TextContent::new("hi there"),
             )],
             api: "test".into(),
-            provider: "test".into(),
+            provider: "test-provider".into(),
             model: "test-model".into(),
             response_model: None,
             response_id: None,
@@ -1204,61 +1159,69 @@ mod tests {
         .await
         .unwrap();
 
-        let runner = Arc::new(ExtensionRunner::from_extensions(&[]));
-        let session = AgentSession::new(AgentSessionConfig {
-            agent: ArcAgent::new(ameli_agent_core::AgentOptions {
-                initial_state: Some(AgentState {
-                    system_prompt: String::new(),
-                    model: test_model(),
-                    thinking_level: ThinkingLevel::Off,
-                    tools: vec![],
-                    messages: vec![],
-                    is_streaming: false,
-                    streaming_message: None,
-                    pending_tool_calls: HashSet::new(),
-                    error_message: None,
-                }),
-                ..Default::default()
-            }),
-            session_manager: sm,
-            runner,
+        let result = create_agent_session(CreateAgentSessionOptions {
+            model: ModelRef {
+                provider: "test-provider".into(),
+                model_id: "test-model".into(),
+            },
+            model_registry: test_model_registry(),
+            auth_storage: test_auth_storage(),
+            session_manager: sm.clone(),
             interface: Arc::new(NoopInterface),
+            extensions: vec![],
+            thinking_level: None,
+            system_prompt: None,
         })
-        .await;
+        .await
+        .unwrap();
 
-        // Before restore, agent has no messages
-        assert!(session.agent.state().await.messages.is_empty());
-
-        // Restore session context
-        session.restore_session_context().await.unwrap();
-
-        // After restore, agent has the session messages
-        let state = session.agent.state().await;
+        let state = result.session.agent().state().await;
         assert_eq!(state.messages.len(), 2);
         assert_eq!(state.messages[0].role(), "user");
         assert_eq!(state.messages[1].role(), "assistant");
+
+        // No model_change should be persisted (session already had data)
+        let entries = sm.entries().await.unwrap();
+        let model_changes: Vec<_> = entries
+            .iter()
+            .filter(|e| matches!(e, crate::types::SessionEntry::ModelChange(_)))
+            .collect();
+        assert_eq!(
+            model_changes.len(),
+            0,
+            "should not persist model change for existing session"
+        );
     }
 
     #[tokio::test]
-    async fn restore_session_context_sets_thinking_level() {
-        let agent = test_agent();
+    async fn create_agent_session_restores_thinking_level_from_existing_session() {
         let sm = Arc::new(TestSessionManager::new());
 
-        // Append a thinking level change
+        // Pre-populate with a message and thinking level change
+        sm.append_message(AgentMessage::User(ameli_ai::types::UserMessage::text(
+            "hello",
+        )))
+        .await
+        .unwrap();
         sm.append_thinking_level_change("medium").await.unwrap();
 
-        let runner = Arc::new(ExtensionRunner::from_extensions(&[]));
-        let session = AgentSession::new(AgentSessionConfig {
-            agent,
+        let result = create_agent_session(CreateAgentSessionOptions {
+            model: ModelRef {
+                provider: "test-provider".into(),
+                model_id: "test-model".into(),
+            },
+            model_registry: test_model_registry(),
+            auth_storage: test_auth_storage(),
             session_manager: sm,
-            runner,
             interface: Arc::new(NoopInterface),
+            extensions: vec![],
+            thinking_level: None,
+            system_prompt: None,
         })
-        .await;
+        .await
+        .unwrap();
 
-        session.restore_session_context().await.unwrap();
-
-        let state = session.agent.state().await;
+        let state = result.session.agent().state().await;
         assert_eq!(state.thinking_level, ThinkingLevel::Medium);
     }
 
@@ -1539,50 +1502,5 @@ mod tests {
         .await;
 
         assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn create_agent_session_restores_existing_session() {
-        let sm = Arc::new(TestSessionManager::new());
-
-        // Pre-populate session with a user message
-        sm.append_message(AgentMessage::User(ameli_ai::types::UserMessage::text(
-            "previous message",
-        )))
-        .await
-        .unwrap();
-
-        let result = create_agent_session(CreateAgentSessionOptions {
-            model: ModelRef {
-                provider: "test-provider".into(),
-                model_id: "test-model".into(),
-            },
-            model_registry: test_model_registry(),
-            auth_storage: test_auth_storage(),
-            session_manager: sm.clone(),
-            interface: Arc::new(NoopInterface),
-            extensions: vec![],
-            thinking_level: None,
-            system_prompt: None,
-        })
-        .await
-        .unwrap();
-
-        // The existing message should be restored
-        let state = result.session.agent().state().await;
-        assert_eq!(state.messages.len(), 1);
-        assert_eq!(state.messages[0].role(), "user");
-
-        // No model_change should be persisted (session already had data)
-        let entries = sm.entries().await.unwrap();
-        let model_changes: Vec<_> = entries
-            .iter()
-            .filter(|e| matches!(e, crate::types::SessionEntry::ModelChange(_)))
-            .collect();
-        assert_eq!(
-            model_changes.len(),
-            0,
-            "should not persist model change for existing session"
-        );
     }
 }
