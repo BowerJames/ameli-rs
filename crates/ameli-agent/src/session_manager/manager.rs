@@ -13,8 +13,8 @@
 //!
 //! [`AgentSession`]: ameli_agent::AgentSession
 
-use crate::error::SessionError;
-use crate::types::{CustomMessageContent, SessionContext, SessionEntry};
+use super::error::SessionError;
+use super::types::{CustomMessageContent, SessionContext, SessionEntry};
 use ameli_agent_core::types::AgentMessage;
 use std::future::Future;
 use std::pin::Pin;
@@ -43,7 +43,7 @@ pub type AsyncResult<T> = Pin<Box<dyn Future<Output = Result<T, SessionError>> +
 /// # Examples
 ///
 /// ```
-/// use ameli_session_manager::SessionMetadata;
+/// use ameli_agent::session_manager::SessionMetadata;
 ///
 /// struct InMemoryMetadata {
 ///     id: String,

@@ -21,8 +21,9 @@
 //! ```no_run
 //! use ameli_agent::{
 //!     AgentSession, AgentSessionConfig,
-//!     ExtensionRunner, NoopInterface, SessionManager, SessionMetadata,
+//!     ExtensionRunner, NoopInterface,
 //! };
+//! use ameli_agent::session_manager::{SessionManager, SessionMetadata};
 //! use ameli_agent_core::ArcAgent;
 //! use std::sync::Arc;
 //!
@@ -47,19 +48,19 @@
 //! }
 //! ```
 
+use crate::auth_storage::AuthStorage;
 use crate::error::CreateAgentSessionError;
 use crate::extension::{init_extensions, Extension, ExtensionContext, ExtensionRunner};
 use crate::interface::Interface;
+use crate::session_manager::{
+    CustomMessageContent, ModelRef, SessionContext, SessionManager, SessionMessage, SessionMetadata,
+};
 use ameli_agent_core::types::{
     AgentEvent, AgentMessage, AgentState, CustomAgentMessage, ThinkingLevel,
 };
 use ameli_agent_core::{AgentOptions, ArcAgent, Subscription};
 use ameli_ai::types::{ImageContent, MediaContentBlock, TextContent};
-use ameli_auth_storage::AuthStorage;
 use ameli_model_registry::ModelRegistry;
-use ameli_session_manager::{
-    CustomMessageContent, ModelRef, SessionContext, SessionManager, SessionMessage, SessionMetadata,
-};
 use std::collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
@@ -639,10 +640,9 @@ impl<M: SessionMetadata> fmt::Debug for CreateAgentSessionResult<M> {
 /// ```no_run
 /// use ameli_agent::{
 ///     create_agent_session, CreateAgentSessionOptions, NoopInterface,
-///     SessionManager, SessionMetadata, InMemorySessionManager,
 /// };
-/// use ameli_agent::ModelRef;
-/// use ameli_auth_storage::InMemoryAuthStorage;
+/// use ameli_agent::session_manager::{SessionManager, SessionMetadata, InMemorySessionManager, ModelRef};
+/// use ameli_agent::auth_storage::InMemoryAuthStorage;
 /// use ameli_model_registry::DefaultModelRegistry;
 /// use std::sync::Arc;
 ///
@@ -770,8 +770,8 @@ mod tests {
     use super::*;
     use crate::extension::{Extension, ExtensionApi};
     use crate::interface::NoopInterface;
+    use crate::session_manager::{InMemoryMetadata, InMemorySessionManager, SessionEntry};
     use ameli_ai::types::{Cost, InputType, Model};
-    use ameli_session_manager::{InMemoryMetadata, InMemorySessionManager, SessionEntry};
 
     fn test_model() -> Model {
         Model {
@@ -1107,7 +1107,7 @@ mod tests {
 
     // -- create_agent_session tests ---------------------------------------------
 
-    use ameli_auth_storage::InMemoryAuthStorage;
+    use crate::auth_storage::InMemoryAuthStorage;
     use ameli_model_registry::DefaultModelRegistry;
 
     /// Helper: register a test model and return the registry.

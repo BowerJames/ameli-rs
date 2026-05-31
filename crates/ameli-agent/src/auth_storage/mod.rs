@@ -1,6 +1,6 @@
 //! API key storage trait and in-memory implementation.
 //!
-//! This crate defines [`AuthStorage`] — a trait for looking up API keys by
+//! This module defines [`AuthStorage`] — a trait for looking up API keys by
 //! provider name — and [`InMemoryAuthStorage`], a concrete implementation
 //! backed by an interior-mutable `HashMap` with environment variable fallback.
 //!
@@ -16,9 +16,9 @@
 //! # Example
 //!
 //! ```
-//! use ameli_auth_storage::{AuthStorage, InMemoryAuthStorage};
+//! use ameli_agent::auth_storage::{AuthStorage, InMemoryAuthStorage};
 //!
-//! # fn main() -> Result<(), ameli_auth_storage::ApiKeyNotFoundError> {
+//! # fn main() -> Result<(), ameli_agent::auth_storage::ApiKeyNotFoundError> {
 //! let storage = InMemoryAuthStorage::new();
 //! storage.set_api_key("openai", "sk-...".to_string());
 //!
@@ -93,13 +93,13 @@ pub type AsyncResult<T> = Pin<Box<dyn Future<Output = Result<T, ApiKeyNotFoundEr
 /// # Examples
 ///
 /// ```
-/// use ameli_auth_storage::{AuthStorage, ApiKeyNotFoundError};
+/// use ameli_agent::auth_storage::{AuthStorage, ApiKeyNotFoundError};
 /// use std::sync::Arc;
 ///
 /// struct EnvOnlyStorage;
 ///
 /// impl AuthStorage for EnvOnlyStorage {
-///     fn get_api_key(&self, provider: &str) -> ameli_auth_storage::AsyncResult<String> {
+///     fn get_api_key(&self, provider: &str) -> ameli_agent::auth_storage::AsyncResult<String> {
 ///         let provider = provider.to_string();
 ///         Box::pin(async move {
 ///             let env_name = format!("{}_API_KEY", provider.to_uppercase());
@@ -142,7 +142,7 @@ pub trait AuthStorage: Send + Sync {
 /// # Examples
 ///
 /// ```
-/// use ameli_auth_storage::{AuthStorage, InMemoryAuthStorage};
+/// use ameli_agent::auth_storage::{AuthStorage, InMemoryAuthStorage};
 ///
 /// let storage = InMemoryAuthStorage::new();
 /// storage.set_api_key("openai", "sk-test".to_string());

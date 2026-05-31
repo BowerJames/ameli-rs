@@ -3,7 +3,7 @@
 //! Defines [`CreateAgentSessionError`] for failures during
 //! [`create_agent_session`](crate::create_agent_session).
 
-use ameli_session_manager::SessionError;
+use crate::session_manager::SessionError;
 
 // ---------------------------------------------------------------------------
 // CreateAgentSessionError

@@ -31,12 +31,12 @@ version = "0.1.0"
 dependencies = [
  "ameli-agent-core",
  "ameli-ai",
- "ameli-auth-storage",
  "ameli-model-registry",
- "ameli-session-manager",
  "anyhow",
+ "chrono",
  "serde",
  "serde_json",
+ "temp-env",
  "thiserror",
  "tokio",
  "tokio-util",
@@ -70,15 +70,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ameli-auth-storage"
-version = "0.1.0"
-dependencies = [
- "temp-env",
- "thiserror",
- "tokio",
-]
-
-[[package]]
 name = "ameli-cli"
 version = "0.1.0"
 dependencies = [
@@ -101,19 +92,6 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "ameli-session-manager"
-version = "0.1.0"
-dependencies = [
- "ameli-agent-core",
- "ameli-ai",
- "chrono",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
 ]
 
 [[package]]
