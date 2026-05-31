@@ -1,0 +1,2412 @@
+[
+  {
+    "id": "gpt-oss-120b",
+    "name": "GPT OSS 120B",
+    "api": "openai-completions",
+    "provider": "cerebras",
+    "baseUrl": "https://api.cerebras.ai/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.25,
+      "output": 0.69,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 131072,
+    "maxTokens": 32768,
+    "compat": {
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false
+    }
+  },
+  {
+    "id": "llama3.1-8b",
+    "name": "Llama 3.1 8B",
+    "api": "openai-completions",
+    "provider": "cerebras",
+    "baseUrl": "https://api.cerebras.ai/v1",
+    "reasoning": false,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.1,
+      "output": 0.1,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 32000,
+    "maxTokens": 8000,
+    "compat": {
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false
+    }
+  },
+  {
+    "id": "zai-glm-4.7",
+    "name": "Z.AI GLM-4.7",
+    "api": "openai-completions",
+    "provider": "cerebras",
+    "baseUrl": "https://api.cerebras.ai/v1",
+    "reasoning": false,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 2.25,
+      "output": 2.75,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 131072,
+    "maxTokens": 40000,
+    "compat": {
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false
+    }
+  },
+  {
+    "id": "deepseek-chat",
+    "name": "DeepSeek Chat",
+    "api": "openai-completions",
+    "provider": "deepseek",
+    "baseUrl": "https://api.deepseek.com",
+    "reasoning": false,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.14,
+      "output": 0.28,
+      "cache_read": 0.028,
+      "cache_write": 0.0
+    },
+    "contextWindow": 1000000,
+    "maxTokens": 384000,
+    "compat": {
+      "requiresReasoningContentOnAssistantMessages": true,
+      "thinkingFormat": "deepseek"
+    }
+  },
+  {
+    "id": "deepseek-reasoner",
+    "name": "DeepSeek Reasoner",
+    "api": "openai-completions",
+    "provider": "deepseek",
+    "baseUrl": "https://api.deepseek.com",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.14,
+      "output": 0.28,
+      "cache_read": 0.028,
+      "cache_write": 0.0
+    },
+    "contextWindow": 1000000,
+    "maxTokens": 384000,
+    "compat": {
+      "requiresReasoningContentOnAssistantMessages": true,
+      "thinkingFormat": "deepseek"
+    }
+  },
+  {
+    "id": "deepseek-v4-flash",
+    "name": "DeepSeek V4 Flash",
+    "api": "openai-completions",
+    "provider": "deepseek",
+    "baseUrl": "https://api.deepseek.com",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.14,
+      "output": 0.28,
+      "cache_read": 0.0028,
+      "cache_write": 0.0
+    },
+    "contextWindow": 1000000,
+    "maxTokens": 384000,
+    "compat": {
+      "requiresReasoningContentOnAssistantMessages": true,
+      "thinkingFormat": "deepseek"
+    }
+  },
+  {
+    "id": "deepseek-v4-pro",
+    "name": "DeepSeek V4 Pro",
+    "api": "openai-completions",
+    "provider": "deepseek",
+    "baseUrl": "https://api.deepseek.com",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.435,
+      "output": 0.87,
+      "cache_read": 0.003625,
+      "cache_write": 0.0
+    },
+    "contextWindow": 1000000,
+    "maxTokens": 384000,
+    "compat": {
+      "requiresReasoningContentOnAssistantMessages": true,
+      "thinkingFormat": "deepseek"
+    }
+  },
+  {
+    "id": "groq/compound",
+    "name": "Compound",
+    "api": "openai-completions",
+    "provider": "groq",
+    "baseUrl": "https://api.groq.com/openai/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.0,
+      "output": 0.0,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 131072,
+    "maxTokens": 8192,
+    "compat": {
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false
+    }
+  },
+  {
+    "id": "groq/compound-mini",
+    "name": "Compound Mini",
+    "api": "openai-completions",
+    "provider": "groq",
+    "baseUrl": "https://api.groq.com/openai/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.0,
+      "output": 0.0,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 131072,
+    "maxTokens": 8192,
+    "compat": {
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false
+    }
+  },
+  {
+    "id": "llama-3.1-8b-instant",
+    "name": "Llama 3.1 8B Instant",
+    "api": "openai-completions",
+    "provider": "groq",
+    "baseUrl": "https://api.groq.com/openai/v1",
+    "reasoning": false,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.05,
+      "output": 0.08,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 131072,
+    "maxTokens": 131072,
+    "compat": {
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false
+    }
+  },
+  {
+    "id": "llama-3.3-70b-versatile",
+    "name": "Llama 3.3 70B Versatile",
+    "api": "openai-completions",
+    "provider": "groq",
+    "baseUrl": "https://api.groq.com/openai/v1",
+    "reasoning": false,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.59,
+      "output": 0.79,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 131072,
+    "maxTokens": 32768,
+    "compat": {
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false
+    }
+  },
+  {
+    "id": "meta-llama/llama-4-scout-17b-16e-instruct",
+    "name": "Llama 4 Scout 17B",
+    "api": "openai-completions",
+    "provider": "groq",
+    "baseUrl": "https://api.groq.com/openai/v1",
+    "reasoning": false,
+    "input": [
+      "Text",
+      "Image"
+    ],
+    "cost": {
+      "input": 0.11,
+      "output": 0.34,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 131072,
+    "maxTokens": 8192,
+    "compat": {
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false
+    }
+  },
+  {
+    "id": "moonshotai/kimi-k2-instruct-0905",
+    "name": "Kimi K2 Instruct 0905",
+    "api": "openai-completions",
+    "provider": "groq",
+    "baseUrl": "https://api.groq.com/openai/v1",
+    "reasoning": false,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 1.0,
+      "output": 3.0,
+      "cache_read": 0.5,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 16384,
+    "compat": {
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false
+    }
+  },
+  {
+    "id": "openai/gpt-oss-120b",
+    "name": "GPT OSS 120B",
+    "api": "openai-completions",
+    "provider": "groq",
+    "baseUrl": "https://api.groq.com/openai/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.15,
+      "output": 0.6,
+      "cache_read": 0.075,
+      "cache_write": 0.0
+    },
+    "contextWindow": 131072,
+    "maxTokens": 65536,
+    "compat": {
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false
+    }
+  },
+  {
+    "id": "openai/gpt-oss-20b",
+    "name": "GPT OSS 20B",
+    "api": "openai-completions",
+    "provider": "groq",
+    "baseUrl": "https://api.groq.com/openai/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.075,
+      "output": 0.3,
+      "cache_read": 0.0375,
+      "cache_write": 0.0
+    },
+    "contextWindow": 131072,
+    "maxTokens": 65536,
+    "compat": {
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false
+    }
+  },
+  {
+    "id": "openai/gpt-oss-safeguard-20b",
+    "name": "Safety GPT OSS 20B",
+    "api": "openai-completions",
+    "provider": "groq",
+    "baseUrl": "https://api.groq.com/openai/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.075,
+      "output": 0.3,
+      "cache_read": 0.037,
+      "cache_write": 0.0
+    },
+    "contextWindow": 131072,
+    "maxTokens": 65536,
+    "compat": {
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false
+    }
+  },
+  {
+    "id": "qwen/qwen3-32b",
+    "name": "Qwen3 32B",
+    "api": "openai-completions",
+    "provider": "groq",
+    "baseUrl": "https://api.groq.com/openai/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.29,
+      "output": 0.59,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 131072,
+    "maxTokens": 40960,
+    "compat": {
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false
+    }
+  },
+  {
+    "id": "MiniMaxAI/MiniMax-M2.1",
+    "name": "MiniMax-M2.1",
+    "api": "openai-completions",
+    "provider": "huggingface",
+    "baseUrl": "https://router.huggingface.co/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.3,
+      "output": 1.2,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 204800,
+    "maxTokens": 131072,
+    "compat": {
+      "supportsDeveloperRole": false
+    }
+  },
+  {
+    "id": "MiniMaxAI/MiniMax-M2.5",
+    "name": "MiniMax-M2.5",
+    "api": "openai-completions",
+    "provider": "huggingface",
+    "baseUrl": "https://router.huggingface.co/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.3,
+      "output": 1.2,
+      "cache_read": 0.03,
+      "cache_write": 0.0
+    },
+    "contextWindow": 204800,
+    "maxTokens": 131072,
+    "compat": {
+      "supportsDeveloperRole": false
+    }
+  },
+  {
+    "id": "MiniMaxAI/MiniMax-M2.7",
+    "name": "MiniMax-M2.7",
+    "api": "openai-completions",
+    "provider": "huggingface",
+    "baseUrl": "https://router.huggingface.co/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.3,
+      "output": 1.2,
+      "cache_read": 0.06,
+      "cache_write": 0.0
+    },
+    "contextWindow": 204800,
+    "maxTokens": 131072,
+    "compat": {
+      "supportsDeveloperRole": false
+    }
+  },
+  {
+    "id": "Qwen/Qwen3-235B-A22B-Thinking-2507",
+    "name": "Qwen3-235B-A22B-Thinking-2507",
+    "api": "openai-completions",
+    "provider": "huggingface",
+    "baseUrl": "https://router.huggingface.co/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.3,
+      "output": 3.0,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 131072,
+    "compat": {
+      "supportsDeveloperRole": false
+    }
+  },
+  {
+    "id": "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+    "name": "Qwen3-Coder-480B-A35B-Instruct",
+    "api": "openai-completions",
+    "provider": "huggingface",
+    "baseUrl": "https://router.huggingface.co/v1",
+    "reasoning": false,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 2.0,
+      "output": 2.0,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 66536,
+    "compat": {
+      "supportsDeveloperRole": false
+    }
+  },
+  {
+    "id": "Qwen/Qwen3-Coder-Next",
+    "name": "Qwen3-Coder-Next",
+    "api": "openai-completions",
+    "provider": "huggingface",
+    "baseUrl": "https://router.huggingface.co/v1",
+    "reasoning": false,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.2,
+      "output": 1.5,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 65536,
+    "compat": {
+      "supportsDeveloperRole": false
+    }
+  },
+  {
+    "id": "Qwen/Qwen3-Next-80B-A3B-Instruct",
+    "name": "Qwen3-Next-80B-A3B-Instruct",
+    "api": "openai-completions",
+    "provider": "huggingface",
+    "baseUrl": "https://router.huggingface.co/v1",
+    "reasoning": false,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.25,
+      "output": 1.0,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 66536,
+    "compat": {
+      "supportsDeveloperRole": false
+    }
+  },
+  {
+    "id": "Qwen/Qwen3-Next-80B-A3B-Thinking",
+    "name": "Qwen3-Next-80B-A3B-Thinking",
+    "api": "openai-completions",
+    "provider": "huggingface",
+    "baseUrl": "https://router.huggingface.co/v1",
+    "reasoning": false,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.3,
+      "output": 2.0,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 131072,
+    "compat": {
+      "supportsDeveloperRole": false
+    }
+  },
+  {
+    "id": "Qwen/Qwen3.5-397B-A17B",
+    "name": "Qwen3.5-397B-A17B",
+    "api": "openai-completions",
+    "provider": "huggingface",
+    "baseUrl": "https://router.huggingface.co/v1",
+    "reasoning": true,
+    "input": [
+      "Text",
+      "Image"
+    ],
+    "cost": {
+      "input": 0.6,
+      "output": 3.6,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 32768,
+    "compat": {
+      "supportsDeveloperRole": false
+    }
+  },
+  {
+    "id": "XiaomiMiMo/MiMo-V2-Flash",
+    "name": "MiMo-V2-Flash",
+    "api": "openai-completions",
+    "provider": "huggingface",
+    "baseUrl": "https://router.huggingface.co/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.1,
+      "output": 0.3,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 4096,
+    "compat": {
+      "supportsDeveloperRole": false
+    }
+  },
+  {
+    "id": "deepseek-ai/DeepSeek-R1-0528",
+    "name": "DeepSeek-R1-0528",
+    "api": "openai-completions",
+    "provider": "huggingface",
+    "baseUrl": "https://router.huggingface.co/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 3.0,
+      "output": 5.0,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 163840,
+    "maxTokens": 163840,
+    "compat": {
+      "supportsDeveloperRole": false
+    }
+  },
+  {
+    "id": "deepseek-ai/DeepSeek-V3.2",
+    "name": "DeepSeek-V3.2",
+    "api": "openai-completions",
+    "provider": "huggingface",
+    "baseUrl": "https://router.huggingface.co/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.28,
+      "output": 0.4,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 163840,
+    "maxTokens": 65536,
+    "compat": {
+      "supportsDeveloperRole": false
+    }
+  },
+  {
+    "id": "deepseek-ai/DeepSeek-V4-Pro",
+    "name": "DeepSeek V4 Pro",
+    "api": "openai-completions",
+    "provider": "huggingface",
+    "baseUrl": "https://router.huggingface.co/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.435,
+      "output": 0.87,
+      "cache_read": 0.003625,
+      "cache_write": 0.0
+    },
+    "contextWindow": 1048576,
+    "maxTokens": 393216,
+    "compat": {
+      "supportsDeveloperRole": false
+    }
+  },
+  {
+    "id": "moonshotai/Kimi-K2-Instruct",
+    "name": "Kimi-K2-Instruct",
+    "api": "openai-completions",
+    "provider": "huggingface",
+    "baseUrl": "https://router.huggingface.co/v1",
+    "reasoning": false,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 1.0,
+      "output": 3.0,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 131072,
+    "maxTokens": 16384,
+    "compat": {
+      "supportsDeveloperRole": false
+    }
+  },
+  {
+    "id": "moonshotai/Kimi-K2-Instruct-0905",
+    "name": "Kimi-K2-Instruct-0905",
+    "api": "openai-completions",
+    "provider": "huggingface",
+    "baseUrl": "https://router.huggingface.co/v1",
+    "reasoning": false,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 1.0,
+      "output": 3.0,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 16384,
+    "compat": {
+      "supportsDeveloperRole": false
+    }
+  },
+  {
+    "id": "moonshotai/Kimi-K2-Thinking",
+    "name": "Kimi-K2-Thinking",
+    "api": "openai-completions",
+    "provider": "huggingface",
+    "baseUrl": "https://router.huggingface.co/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.6,
+      "output": 2.5,
+      "cache_read": 0.15,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 262144,
+    "compat": {
+      "supportsDeveloperRole": false
+    }
+  },
+  {
+    "id": "moonshotai/Kimi-K2.5",
+    "name": "Kimi-K2.5",
+    "api": "openai-completions",
+    "provider": "huggingface",
+    "baseUrl": "https://router.huggingface.co/v1",
+    "reasoning": true,
+    "input": [
+      "Text",
+      "Image"
+    ],
+    "cost": {
+      "input": 0.6,
+      "output": 3.0,
+      "cache_read": 0.1,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 262144,
+    "compat": {
+      "supportsDeveloperRole": false
+    }
+  },
+  {
+    "id": "moonshotai/Kimi-K2.6",
+    "name": "Kimi-K2.6",
+    "api": "openai-completions",
+    "provider": "huggingface",
+    "baseUrl": "https://router.huggingface.co/v1",
+    "reasoning": true,
+    "input": [
+      "Text",
+      "Image"
+    ],
+    "cost": {
+      "input": 0.95,
+      "output": 4.0,
+      "cache_read": 0.16,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 262144,
+    "compat": {
+      "supportsDeveloperRole": false
+    }
+  },
+  {
+    "id": "zai-org/GLM-4.7",
+    "name": "GLM-4.7",
+    "api": "openai-completions",
+    "provider": "huggingface",
+    "baseUrl": "https://router.huggingface.co/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.6,
+      "output": 2.2,
+      "cache_read": 0.11,
+      "cache_write": 0.0
+    },
+    "contextWindow": 204800,
+    "maxTokens": 131072,
+    "compat": {
+      "supportsDeveloperRole": false
+    }
+  },
+  {
+    "id": "zai-org/GLM-4.7-Flash",
+    "name": "GLM-4.7-Flash",
+    "api": "openai-completions",
+    "provider": "huggingface",
+    "baseUrl": "https://router.huggingface.co/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.0,
+      "output": 0.0,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 200000,
+    "maxTokens": 128000,
+    "compat": {
+      "supportsDeveloperRole": false
+    }
+  },
+  {
+    "id": "zai-org/GLM-5",
+    "name": "GLM-5",
+    "api": "openai-completions",
+    "provider": "huggingface",
+    "baseUrl": "https://router.huggingface.co/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 1.0,
+      "output": 3.2,
+      "cache_read": 0.2,
+      "cache_write": 0.0
+    },
+    "contextWindow": 202752,
+    "maxTokens": 131072,
+    "compat": {
+      "supportsDeveloperRole": false
+    }
+  },
+  {
+    "id": "zai-org/GLM-5.1",
+    "name": "GLM-5.1",
+    "api": "openai-completions",
+    "provider": "huggingface",
+    "baseUrl": "https://router.huggingface.co/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 1.0,
+      "output": 3.2,
+      "cache_read": 0.2,
+      "cache_write": 0.0
+    },
+    "contextWindow": 202752,
+    "maxTokens": 131072,
+    "compat": {
+      "supportsDeveloperRole": false
+    }
+  },
+  {
+    "id": "kimi-k2-0711-preview",
+    "name": "Kimi K2 0711",
+    "api": "openai-completions",
+    "provider": "moonshotai",
+    "baseUrl": "https://api.moonshot.ai/v1",
+    "reasoning": false,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.6,
+      "output": 2.5,
+      "cache_read": 0.15,
+      "cache_write": 0.0
+    },
+    "contextWindow": 131072,
+    "maxTokens": 16384,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "kimi-k2-0905-preview",
+    "name": "Kimi K2 0905",
+    "api": "openai-completions",
+    "provider": "moonshotai",
+    "baseUrl": "https://api.moonshot.ai/v1",
+    "reasoning": false,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.6,
+      "output": 2.5,
+      "cache_read": 0.15,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 262144,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "kimi-k2-thinking",
+    "name": "Kimi K2 Thinking",
+    "api": "openai-completions",
+    "provider": "moonshotai",
+    "baseUrl": "https://api.moonshot.ai/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.6,
+      "output": 2.5,
+      "cache_read": 0.15,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 262144,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "kimi-k2-thinking-turbo",
+    "name": "Kimi K2 Thinking Turbo",
+    "api": "openai-completions",
+    "provider": "moonshotai",
+    "baseUrl": "https://api.moonshot.ai/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 1.15,
+      "output": 8.0,
+      "cache_read": 0.15,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 262144,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "kimi-k2-turbo-preview",
+    "name": "Kimi K2 Turbo",
+    "api": "openai-completions",
+    "provider": "moonshotai",
+    "baseUrl": "https://api.moonshot.ai/v1",
+    "reasoning": false,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 2.4,
+      "output": 10.0,
+      "cache_read": 0.6,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 262144,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "kimi-k2.5",
+    "name": "Kimi K2.5",
+    "api": "openai-completions",
+    "provider": "moonshotai",
+    "baseUrl": "https://api.moonshot.ai/v1",
+    "reasoning": true,
+    "input": [
+      "Text",
+      "Image"
+    ],
+    "cost": {
+      "input": 0.6,
+      "output": 3.0,
+      "cache_read": 0.1,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 262144,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "kimi-k2.6",
+    "name": "Kimi K2.6",
+    "api": "openai-completions",
+    "provider": "moonshotai",
+    "baseUrl": "https://api.moonshot.ai/v1",
+    "reasoning": true,
+    "input": [
+      "Text",
+      "Image"
+    ],
+    "cost": {
+      "input": 0.95,
+      "output": 4.0,
+      "cache_read": 0.16,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 262144,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "kimi-k2-0711-preview",
+    "name": "Kimi K2 0711",
+    "api": "openai-completions",
+    "provider": "moonshotai-cn",
+    "baseUrl": "https://api.moonshot.cn/v1",
+    "reasoning": false,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.6,
+      "output": 2.5,
+      "cache_read": 0.15,
+      "cache_write": 0.0
+    },
+    "contextWindow": 131072,
+    "maxTokens": 16384,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "kimi-k2-0905-preview",
+    "name": "Kimi K2 0905",
+    "api": "openai-completions",
+    "provider": "moonshotai-cn",
+    "baseUrl": "https://api.moonshot.cn/v1",
+    "reasoning": false,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.6,
+      "output": 2.5,
+      "cache_read": 0.15,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 262144,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "kimi-k2-thinking",
+    "name": "Kimi K2 Thinking",
+    "api": "openai-completions",
+    "provider": "moonshotai-cn",
+    "baseUrl": "https://api.moonshot.cn/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.6,
+      "output": 2.5,
+      "cache_read": 0.15,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 262144,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "kimi-k2-thinking-turbo",
+    "name": "Kimi K2 Thinking Turbo",
+    "api": "openai-completions",
+    "provider": "moonshotai-cn",
+    "baseUrl": "https://api.moonshot.cn/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 1.15,
+      "output": 8.0,
+      "cache_read": 0.15,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 262144,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "kimi-k2-turbo-preview",
+    "name": "Kimi K2 Turbo",
+    "api": "openai-completions",
+    "provider": "moonshotai-cn",
+    "baseUrl": "https://api.moonshot.cn/v1",
+    "reasoning": false,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 2.4,
+      "output": 10.0,
+      "cache_read": 0.6,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 262144,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "kimi-k2.5",
+    "name": "Kimi K2.5",
+    "api": "openai-completions",
+    "provider": "moonshotai-cn",
+    "baseUrl": "https://api.moonshot.cn/v1",
+    "reasoning": true,
+    "input": [
+      "Text",
+      "Image"
+    ],
+    "cost": {
+      "input": 0.6,
+      "output": 3.0,
+      "cache_read": 0.1,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 262144,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "kimi-k2.6",
+    "name": "Kimi K2.6",
+    "api": "openai-completions",
+    "provider": "moonshotai-cn",
+    "baseUrl": "https://api.moonshot.cn/v1",
+    "reasoning": true,
+    "input": [
+      "Text",
+      "Image"
+    ],
+    "cost": {
+      "input": 0.95,
+      "output": 4.0,
+      "cache_read": 0.16,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 262144,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "MiniMaxAI/MiniMax-M2.5",
+    "name": "MiniMax-M2.5",
+    "api": "openai-completions",
+    "provider": "together",
+    "baseUrl": "https://api.together.ai/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.3,
+      "output": 1.2,
+      "cache_read": 0.06,
+      "cache_write": 0.0
+    },
+    "contextWindow": 204800,
+    "maxTokens": 131072,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "MiniMaxAI/MiniMax-M2.7",
+    "name": "MiniMax-M2.7",
+    "api": "openai-completions",
+    "provider": "together",
+    "baseUrl": "https://api.together.ai/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.3,
+      "output": 1.2,
+      "cache_read": 0.06,
+      "cache_write": 0.0
+    },
+    "contextWindow": 202752,
+    "maxTokens": 131072,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "Qwen/Qwen3-235B-A22B-Instruct-2507-tput",
+    "name": "Qwen3 235B A22B Instruct 2507 FP8",
+    "api": "openai-completions",
+    "provider": "together",
+    "baseUrl": "https://api.together.ai/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.2,
+      "output": 0.6,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 262144,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8",
+    "name": "Qwen3 Coder 480B A35B Instruct",
+    "api": "openai-completions",
+    "provider": "together",
+    "baseUrl": "https://api.together.ai/v1",
+    "reasoning": false,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 2.0,
+      "output": 2.0,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 262144,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "Qwen/Qwen3-Coder-Next-FP8",
+    "name": "Qwen3 Coder Next FP8",
+    "api": "openai-completions",
+    "provider": "together",
+    "baseUrl": "https://api.together.ai/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.5,
+      "output": 1.2,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 262144,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "Qwen/Qwen3.5-397B-A17B",
+    "name": "Qwen3.5 397B A17B",
+    "api": "openai-completions",
+    "provider": "together",
+    "baseUrl": "https://api.together.ai/v1",
+    "reasoning": true,
+    "input": [
+      "Text",
+      "Image"
+    ],
+    "cost": {
+      "input": 0.6,
+      "output": 3.6,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 130000,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "Qwen/Qwen3.6-Plus",
+    "name": "Qwen3.6 Plus",
+    "api": "openai-completions",
+    "provider": "together",
+    "baseUrl": "https://api.together.ai/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.5,
+      "output": 3.0,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 1000000,
+    "maxTokens": 500000,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "Qwen/Qwen3.7-Max",
+    "name": "Qwen3.7 Max",
+    "api": "openai-completions",
+    "provider": "together",
+    "baseUrl": "https://api.together.ai/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 2.5,
+      "output": 7.5,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 1000000,
+    "maxTokens": 500000,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "deepseek-ai/DeepSeek-V3",
+    "name": "DeepSeek V3",
+    "api": "openai-completions",
+    "provider": "together",
+    "baseUrl": "https://api.together.ai/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 1.25,
+      "output": 1.25,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 131072,
+    "maxTokens": 131072,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "deepseek-ai/DeepSeek-V3-1",
+    "name": "DeepSeek V3.1",
+    "api": "openai-completions",
+    "provider": "together",
+    "baseUrl": "https://api.together.ai/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.6,
+      "output": 1.7,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 131072,
+    "maxTokens": 131072,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "deepseek-ai/DeepSeek-V4-Pro",
+    "name": "DeepSeek V4 Pro",
+    "api": "openai-completions",
+    "provider": "together",
+    "baseUrl": "https://api.together.ai/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 2.1,
+      "output": 4.4,
+      "cache_read": 0.2,
+      "cache_write": 0.0
+    },
+    "contextWindow": 512000,
+    "maxTokens": 384000,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "essentialai/Rnj-1-Instruct",
+    "name": "Rnj-1 Instruct",
+    "api": "openai-completions",
+    "provider": "together",
+    "baseUrl": "https://api.together.ai/v1",
+    "reasoning": false,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.15,
+      "output": 0.15,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 32768,
+    "maxTokens": 32768,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "google/gemma-4-31B-it",
+    "name": "Gemma 4 31B Instruct",
+    "api": "openai-completions",
+    "provider": "together",
+    "baseUrl": "https://api.together.ai/v1",
+    "reasoning": true,
+    "input": [
+      "Text",
+      "Image"
+    ],
+    "cost": {
+      "input": 0.2,
+      "output": 0.5,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 131072,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+    "name": "Llama 3.3 70B",
+    "api": "openai-completions",
+    "provider": "together",
+    "baseUrl": "https://api.together.ai/v1",
+    "reasoning": false,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.88,
+      "output": 0.88,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 131072,
+    "maxTokens": 131072,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "moonshotai/Kimi-K2.5",
+    "name": "Kimi K2.5",
+    "api": "openai-completions",
+    "provider": "together",
+    "baseUrl": "https://api.together.ai/v1",
+    "reasoning": true,
+    "input": [
+      "Text",
+      "Image"
+    ],
+    "cost": {
+      "input": 0.5,
+      "output": 2.8,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 262144,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "moonshotai/Kimi-K2.6",
+    "name": "Kimi K2.6",
+    "api": "openai-completions",
+    "provider": "together",
+    "baseUrl": "https://api.together.ai/v1",
+    "reasoning": true,
+    "input": [
+      "Text",
+      "Image"
+    ],
+    "cost": {
+      "input": 1.2,
+      "output": 4.5,
+      "cache_read": 0.2,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 131000,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "openai/gpt-oss-120b",
+    "name": "GPT OSS 120B",
+    "api": "openai-completions",
+    "provider": "together",
+    "baseUrl": "https://api.together.ai/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.15,
+      "output": 0.6,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 131072,
+    "maxTokens": 131072,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "zai-org/GLM-5.1",
+    "name": "GLM-5.1",
+    "api": "openai-completions",
+    "provider": "together",
+    "baseUrl": "https://api.together.ai/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 1.4,
+      "output": 4.4,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 202752,
+    "maxTokens": 131072,
+    "compat": {
+      "maxTokensField": "max_tokens",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "supportsStore": false,
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "grok-4.20-0309-non-reasoning",
+    "name": "Grok 4.20 (Non-Reasoning)",
+    "api": "openai-completions",
+    "provider": "xai",
+    "baseUrl": "https://api.x.ai/v1",
+    "reasoning": false,
+    "input": [
+      "Text",
+      "Image"
+    ],
+    "cost": {
+      "input": 1.25,
+      "output": 2.5,
+      "cache_read": 0.2,
+      "cache_write": 0.0
+    },
+    "contextWindow": 2000000,
+    "maxTokens": 30000,
+    "compat": {}
+  },
+  {
+    "id": "grok-4.20-0309-reasoning",
+    "name": "Grok 4.20 (Reasoning)",
+    "api": "openai-completions",
+    "provider": "xai",
+    "baseUrl": "https://api.x.ai/v1",
+    "reasoning": true,
+    "input": [
+      "Text",
+      "Image"
+    ],
+    "cost": {
+      "input": 1.25,
+      "output": 2.5,
+      "cache_read": 0.2,
+      "cache_write": 0.0
+    },
+    "contextWindow": 2000000,
+    "maxTokens": 30000,
+    "compat": {}
+  },
+  {
+    "id": "grok-4.3",
+    "name": "Grok 4.3",
+    "api": "openai-completions",
+    "provider": "xai",
+    "baseUrl": "https://api.x.ai/v1",
+    "reasoning": true,
+    "input": [
+      "Text",
+      "Image"
+    ],
+    "cost": {
+      "input": 1.25,
+      "output": 2.5,
+      "cache_read": 0.2,
+      "cache_write": 0.0
+    },
+    "contextWindow": 1000000,
+    "maxTokens": 30000,
+    "compat": {}
+  },
+  {
+    "id": "grok-build-0.1",
+    "name": "Grok Build 0.1",
+    "api": "openai-completions",
+    "provider": "xai",
+    "baseUrl": "https://api.x.ai/v1",
+    "reasoning": true,
+    "input": [
+      "Text",
+      "Image"
+    ],
+    "cost": {
+      "input": 1.0,
+      "output": 2.0,
+      "cache_read": 0.2,
+      "cache_write": 0.0
+    },
+    "contextWindow": 256000,
+    "maxTokens": 256000,
+    "compat": {}
+  },
+  {
+    "id": "mimo-v2-flash",
+    "name": "MiMo-V2-Flash",
+    "api": "openai-completions",
+    "provider": "xiaomi",
+    "baseUrl": "https://api.xiaomimimo.com/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.1,
+      "output": 0.3,
+      "cache_read": 0.01,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 65536,
+    "compat": {
+      "requiresReasoningContentOnAssistantMessages": true,
+      "thinkingFormat": "deepseek"
+    }
+  },
+  {
+    "id": "mimo-v2-omni",
+    "name": "MiMo-V2-Omni",
+    "api": "openai-completions",
+    "provider": "xiaomi",
+    "baseUrl": "https://api.xiaomimimo.com/v1",
+    "reasoning": true,
+    "input": [
+      "Text",
+      "Image"
+    ],
+    "cost": {
+      "input": 0.4,
+      "output": 2.0,
+      "cache_read": 0.08,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 131072,
+    "compat": {
+      "requiresReasoningContentOnAssistantMessages": true,
+      "thinkingFormat": "deepseek"
+    }
+  },
+  {
+    "id": "mimo-v2-pro",
+    "name": "MiMo-V2-Pro",
+    "api": "openai-completions",
+    "provider": "xiaomi",
+    "baseUrl": "https://api.xiaomimimo.com/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 1.0,
+      "output": 3.0,
+      "cache_read": 0.2,
+      "cache_write": 0.0
+    },
+    "contextWindow": 1048576,
+    "maxTokens": 131072,
+    "compat": {
+      "requiresReasoningContentOnAssistantMessages": true,
+      "thinkingFormat": "deepseek"
+    }
+  },
+  {
+    "id": "mimo-v2.5",
+    "name": "MiMo-V2.5",
+    "api": "openai-completions",
+    "provider": "xiaomi",
+    "baseUrl": "https://api.xiaomimimo.com/v1",
+    "reasoning": true,
+    "input": [
+      "Text",
+      "Image"
+    ],
+    "cost": {
+      "input": 0.4,
+      "output": 2.0,
+      "cache_read": 0.08,
+      "cache_write": 0.0
+    },
+    "contextWindow": 1048576,
+    "maxTokens": 131072,
+    "compat": {
+      "requiresReasoningContentOnAssistantMessages": true,
+      "thinkingFormat": "deepseek"
+    }
+  },
+  {
+    "id": "mimo-v2.5-pro",
+    "name": "MiMo-V2.5-Pro",
+    "api": "openai-completions",
+    "provider": "xiaomi",
+    "baseUrl": "https://api.xiaomimimo.com/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 1.0,
+      "output": 3.0,
+      "cache_read": 0.2,
+      "cache_write": 0.0
+    },
+    "contextWindow": 1048576,
+    "maxTokens": 131072,
+    "compat": {
+      "requiresReasoningContentOnAssistantMessages": true,
+      "thinkingFormat": "deepseek"
+    }
+  },
+  {
+    "id": "mimo-v2-flash",
+    "name": "MiMo-V2-Flash",
+    "api": "openai-completions",
+    "provider": "xiaomi-token-plan-ams",
+    "baseUrl": "https://token-plan-ams.xiaomimimo.com/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.1,
+      "output": 0.3,
+      "cache_read": 0.01,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 65536,
+    "compat": {
+      "requiresReasoningContentOnAssistantMessages": true,
+      "thinkingFormat": "deepseek"
+    }
+  },
+  {
+    "id": "mimo-v2-omni",
+    "name": "MiMo-V2-Omni",
+    "api": "openai-completions",
+    "provider": "xiaomi-token-plan-ams",
+    "baseUrl": "https://token-plan-ams.xiaomimimo.com/v1",
+    "reasoning": true,
+    "input": [
+      "Text",
+      "Image"
+    ],
+    "cost": {
+      "input": 0.4,
+      "output": 2.0,
+      "cache_read": 0.08,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 131072,
+    "compat": {
+      "requiresReasoningContentOnAssistantMessages": true,
+      "thinkingFormat": "deepseek"
+    }
+  },
+  {
+    "id": "mimo-v2-pro",
+    "name": "MiMo-V2-Pro",
+    "api": "openai-completions",
+    "provider": "xiaomi-token-plan-ams",
+    "baseUrl": "https://token-plan-ams.xiaomimimo.com/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 1.0,
+      "output": 3.0,
+      "cache_read": 0.2,
+      "cache_write": 0.0
+    },
+    "contextWindow": 1048576,
+    "maxTokens": 131072,
+    "compat": {
+      "requiresReasoningContentOnAssistantMessages": true,
+      "thinkingFormat": "deepseek"
+    }
+  },
+  {
+    "id": "mimo-v2.5",
+    "name": "MiMo-V2.5",
+    "api": "openai-completions",
+    "provider": "xiaomi-token-plan-ams",
+    "baseUrl": "https://token-plan-ams.xiaomimimo.com/v1",
+    "reasoning": true,
+    "input": [
+      "Text",
+      "Image"
+    ],
+    "cost": {
+      "input": 0.4,
+      "output": 2.0,
+      "cache_read": 0.08,
+      "cache_write": 0.0
+    },
+    "contextWindow": 1048576,
+    "maxTokens": 131072,
+    "compat": {
+      "requiresReasoningContentOnAssistantMessages": true,
+      "thinkingFormat": "deepseek"
+    }
+  },
+  {
+    "id": "mimo-v2.5-pro",
+    "name": "MiMo-V2.5-Pro",
+    "api": "openai-completions",
+    "provider": "xiaomi-token-plan-ams",
+    "baseUrl": "https://token-plan-ams.xiaomimimo.com/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 1.0,
+      "output": 3.0,
+      "cache_read": 0.2,
+      "cache_write": 0.0
+    },
+    "contextWindow": 1048576,
+    "maxTokens": 131072,
+    "compat": {
+      "requiresReasoningContentOnAssistantMessages": true,
+      "thinkingFormat": "deepseek"
+    }
+  },
+  {
+    "id": "mimo-v2-flash",
+    "name": "MiMo-V2-Flash",
+    "api": "openai-completions",
+    "provider": "xiaomi-token-plan-cn",
+    "baseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.1,
+      "output": 0.3,
+      "cache_read": 0.01,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 65536,
+    "compat": {
+      "requiresReasoningContentOnAssistantMessages": true,
+      "thinkingFormat": "deepseek"
+    }
+  },
+  {
+    "id": "mimo-v2-omni",
+    "name": "MiMo-V2-Omni",
+    "api": "openai-completions",
+    "provider": "xiaomi-token-plan-cn",
+    "baseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
+    "reasoning": true,
+    "input": [
+      "Text",
+      "Image"
+    ],
+    "cost": {
+      "input": 0.4,
+      "output": 2.0,
+      "cache_read": 0.08,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 131072,
+    "compat": {
+      "requiresReasoningContentOnAssistantMessages": true,
+      "thinkingFormat": "deepseek"
+    }
+  },
+  {
+    "id": "mimo-v2-pro",
+    "name": "MiMo-V2-Pro",
+    "api": "openai-completions",
+    "provider": "xiaomi-token-plan-cn",
+    "baseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 1.0,
+      "output": 3.0,
+      "cache_read": 0.2,
+      "cache_write": 0.0
+    },
+    "contextWindow": 1048576,
+    "maxTokens": 131072,
+    "compat": {
+      "requiresReasoningContentOnAssistantMessages": true,
+      "thinkingFormat": "deepseek"
+    }
+  },
+  {
+    "id": "mimo-v2.5",
+    "name": "MiMo-V2.5",
+    "api": "openai-completions",
+    "provider": "xiaomi-token-plan-cn",
+    "baseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
+    "reasoning": true,
+    "input": [
+      "Text",
+      "Image"
+    ],
+    "cost": {
+      "input": 0.4,
+      "output": 2.0,
+      "cache_read": 0.08,
+      "cache_write": 0.0
+    },
+    "contextWindow": 1048576,
+    "maxTokens": 131072,
+    "compat": {
+      "requiresReasoningContentOnAssistantMessages": true,
+      "thinkingFormat": "deepseek"
+    }
+  },
+  {
+    "id": "mimo-v2.5-pro",
+    "name": "MiMo-V2.5-Pro",
+    "api": "openai-completions",
+    "provider": "xiaomi-token-plan-cn",
+    "baseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 1.0,
+      "output": 3.0,
+      "cache_read": 0.2,
+      "cache_write": 0.0
+    },
+    "contextWindow": 1048576,
+    "maxTokens": 131072,
+    "compat": {
+      "requiresReasoningContentOnAssistantMessages": true,
+      "thinkingFormat": "deepseek"
+    }
+  },
+  {
+    "id": "mimo-v2-flash",
+    "name": "MiMo-V2-Flash",
+    "api": "openai-completions",
+    "provider": "xiaomi-token-plan-sgp",
+    "baseUrl": "https://token-plan-sgp.xiaomimimo.com/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.1,
+      "output": 0.3,
+      "cache_read": 0.01,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 65536,
+    "compat": {
+      "requiresReasoningContentOnAssistantMessages": true,
+      "thinkingFormat": "deepseek"
+    }
+  },
+  {
+    "id": "mimo-v2-omni",
+    "name": "MiMo-V2-Omni",
+    "api": "openai-completions",
+    "provider": "xiaomi-token-plan-sgp",
+    "baseUrl": "https://token-plan-sgp.xiaomimimo.com/v1",
+    "reasoning": true,
+    "input": [
+      "Text",
+      "Image"
+    ],
+    "cost": {
+      "input": 0.4,
+      "output": 2.0,
+      "cache_read": 0.08,
+      "cache_write": 0.0
+    },
+    "contextWindow": 262144,
+    "maxTokens": 131072,
+    "compat": {
+      "requiresReasoningContentOnAssistantMessages": true,
+      "thinkingFormat": "deepseek"
+    }
+  },
+  {
+    "id": "mimo-v2-pro",
+    "name": "MiMo-V2-Pro",
+    "api": "openai-completions",
+    "provider": "xiaomi-token-plan-sgp",
+    "baseUrl": "https://token-plan-sgp.xiaomimimo.com/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 1.0,
+      "output": 3.0,
+      "cache_read": 0.2,
+      "cache_write": 0.0
+    },
+    "contextWindow": 1048576,
+    "maxTokens": 131072,
+    "compat": {
+      "requiresReasoningContentOnAssistantMessages": true,
+      "thinkingFormat": "deepseek"
+    }
+  },
+  {
+    "id": "mimo-v2.5",
+    "name": "MiMo-V2.5",
+    "api": "openai-completions",
+    "provider": "xiaomi-token-plan-sgp",
+    "baseUrl": "https://token-plan-sgp.xiaomimimo.com/v1",
+    "reasoning": true,
+    "input": [
+      "Text",
+      "Image"
+    ],
+    "cost": {
+      "input": 0.4,
+      "output": 2.0,
+      "cache_read": 0.08,
+      "cache_write": 0.0
+    },
+    "contextWindow": 1048576,
+    "maxTokens": 131072,
+    "compat": {
+      "requiresReasoningContentOnAssistantMessages": true,
+      "thinkingFormat": "deepseek"
+    }
+  },
+  {
+    "id": "mimo-v2.5-pro",
+    "name": "MiMo-V2.5-Pro",
+    "api": "openai-completions",
+    "provider": "xiaomi-token-plan-sgp",
+    "baseUrl": "https://token-plan-sgp.xiaomimimo.com/v1",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 1.0,
+      "output": 3.0,
+      "cache_read": 0.2,
+      "cache_write": 0.0
+    },
+    "contextWindow": 1048576,
+    "maxTokens": 131072,
+    "compat": {
+      "requiresReasoningContentOnAssistantMessages": true,
+      "thinkingFormat": "deepseek"
+    }
+  },
+  {
+    "id": "glm-4.5-air",
+    "name": "GLM-4.5-Air",
+    "api": "openai-completions",
+    "provider": "zai",
+    "baseUrl": "https://api.z.ai/api/coding/paas/v4",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.0,
+      "output": 0.0,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 131072,
+    "maxTokens": 98304,
+    "compat": {
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "thinkingFormat": "zai",
+      "zaiToolStream": true
+    }
+  },
+  {
+    "id": "glm-4.7",
+    "name": "GLM-4.7",
+    "api": "openai-completions",
+    "provider": "zai",
+    "baseUrl": "https://api.z.ai/api/coding/paas/v4",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.0,
+      "output": 0.0,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 204800,
+    "maxTokens": 131072,
+    "compat": {
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "thinkingFormat": "zai",
+      "zaiToolStream": true
+    }
+  },
+  {
+    "id": "glm-5-turbo",
+    "name": "GLM-5-Turbo",
+    "api": "openai-completions",
+    "provider": "zai",
+    "baseUrl": "https://api.z.ai/api/coding/paas/v4",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.0,
+      "output": 0.0,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 200000,
+    "maxTokens": 131072,
+    "compat": {
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "thinkingFormat": "zai",
+      "zaiToolStream": true
+    }
+  },
+  {
+    "id": "glm-5.1",
+    "name": "GLM-5.1",
+    "api": "openai-completions",
+    "provider": "zai",
+    "baseUrl": "https://api.z.ai/api/coding/paas/v4",
+    "reasoning": true,
+    "input": [
+      "Text"
+    ],
+    "cost": {
+      "input": 0.0,
+      "output": 0.0,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 200000,
+    "maxTokens": 131072,
+    "compat": {
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "thinkingFormat": "zai",
+      "zaiToolStream": true
+    }
+  },
+  {
+    "id": "glm-5v-turbo",
+    "name": "GLM-5V-Turbo",
+    "api": "openai-completions",
+    "provider": "zai",
+    "baseUrl": "https://api.z.ai/api/coding/paas/v4",
+    "reasoning": true,
+    "input": [
+      "Text",
+      "Image"
+    ],
+    "cost": {
+      "input": 0.0,
+      "output": 0.0,
+      "cache_read": 0.0,
+      "cache_write": 0.0
+    },
+    "contextWindow": 200000,
+    "maxTokens": 131072,
+    "compat": {
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "thinkingFormat": "zai",
+      "zaiToolStream": true
+    }
+  }
+]

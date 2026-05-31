@@ -85,7 +85,7 @@ pub fn build_request_params(
     if let Some(reasoning) = &options.reasoning {
         if model.reasoning {
             match compat.thinking_format {
-                ThinkingFormat::OpenAi => {
+                ThinkingFormat::OpenAi | ThinkingFormat::Deepseek => {
                     if compat.supports_reasoning_effort {
                         let effort = resolve_reasoning_effort(reasoning, model);
                         map.insert("reasoning_effort".into(), json!(effort));
@@ -643,6 +643,24 @@ mod tests {
         assert_eq!(result["role"], "tool");
         assert_eq!(result["tool_call_id"], "call_1");
         assert_eq!(result["content"], "file.txt");
+    }
+
+    #[test]
+    fn deepseek_thinking_format_emits_reasoning_effort() {
+        let model = test_model_with_reasoning();
+        let context = Context::default();
+        let options = StreamOptions {
+            reasoning: Some(crate::types::ThinkingLevel::High),
+            ..Default::default()
+        };
+        let compat = OpenAICompletionsCompat {
+            thinking_format: ThinkingFormat::Deepseek,
+            ..Default::default()
+        };
+
+        let params = build_request_params(&model, &context, &options, &compat);
+        assert_eq!(params["reasoning_effort"], "high");
+        assert!(params.get("enable_thinking").is_none());
     }
 
     #[test]

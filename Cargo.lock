@@ -83,7 +83,11 @@ name = "ameli-model-registry"
 version = "0.1.0"
 dependencies = [
  "ameli-ai",
+ "reqwest",
+ "serde",
+ "serde_json",
  "thiserror",
+ "tokio",
  "tracing",
 ]
 
