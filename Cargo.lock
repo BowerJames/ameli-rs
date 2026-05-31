@@ -68,10 +68,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ameli-auth-storage"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "ameli-cli"
 version = "0.1.0"
 dependencies = [
  "ameli-ai",
+ "ameli-model-registry",
  "anyhow",
  "clap",
  "serde_json",
