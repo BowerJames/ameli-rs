@@ -29,7 +29,7 @@
 use crate::stream::AssistantMessageEventStream;
 use crate::types::{AssistantMessage, AssistantMessageEvent, Context, Model, StreamOptions};
 use std::collections::HashMap;
-use std::sync::{LazyLock, RwLock};
+use std::sync::{Arc, LazyLock, RwLock};
 
 // ---------------------------------------------------------------------------
 // StreamFn trait
@@ -150,8 +150,8 @@ impl Default for ApiRegistry {
 ///
 /// Use [`stream_simple_global`] or [`complete_simple_global`] to stream via
 /// this registry without passing it explicitly.
-pub static DEFAULT_API_REGISTRY: LazyLock<ApiRegistry> = LazyLock::new(|| {
-    let registry = ApiRegistry::new();
+pub static DEFAULT_API_REGISTRY: LazyLock<Arc<ApiRegistry>> = LazyLock::new(|| {
+    let registry = Arc::new(ApiRegistry::new());
     crate::built_in_apis::openai_completions::register(&registry);
     registry
 });

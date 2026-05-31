@@ -47,14 +47,17 @@
 //! }
 //! ```
 
-use crate::extension::ExtensionContext;
+use crate::error::CreateAgentSessionError;
+use crate::extension::{init_extensions, Extension, ExtensionContext, ExtensionRunner};
 use crate::interface::Interface;
 use crate::session_manager::{SessionManager, SessionMetadata};
-use crate::types::{CustomMessageContent, SessionMessage};
-use crate::ExtensionRunner;
-use ameli_agent_core::types::{AgentEvent, AgentMessage, ThinkingLevel};
-use ameli_agent_core::{ArcAgent, Subscription};
+use crate::types::{CustomMessageContent, ModelRef, SessionMessage};
+use ameli_agent_core::types::{AgentEvent, AgentMessage, AgentState, ThinkingLevel};
+use ameli_agent_core::{AgentOptions, ArcAgent, Subscription};
 use ameli_ai::types::ImageContent;
+use ameli_auth_storage::AuthStorage;
+use ameli_model_registry::ModelRegistry;
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -252,16 +255,18 @@ impl<M: SessionMetadata> AgentSession<M> {
 
     /// Send a prompt to the agent.
     ///
-    /// Resolves the session context, emits `before_agent_start`, and
-    /// delegates to the agent. Messages are persisted to the session tree
-    /// via the internal agent event subscription.
+    /// Emits `before_agent_start`, and delegates to the agent. Messages are
+    /// persisted to the session tree via the internal agent event subscription.
+    ///
+    /// The caller is responsible for ensuring session context has been restored
+    /// (e.g., via [`create_agent_session`](crate::create_agent_session)) before
+    /// calling this method.
     pub async fn prompt(
         &self,
         text: impl Into<String>,
         images: Vec<ImageContent>,
     ) -> anyhow::Result<()> {
         let text = text.into();
-        self.restore_session_context().await?;
 
         // Emit before_agent_start and collect results.
         let system_prompt = self.get_current_system_prompt().await;
@@ -322,9 +327,10 @@ impl<M: SessionMetadata> AgentSession<M> {
 
     /// Continue from the current transcript.
     ///
-    /// Resolves session context and delegates to the agent.
+    /// Delegates to the agent. The caller is responsible for ensuring session
+    /// context has been restored (e.g., via [`create_agent_session`](crate::create_agent_session))
+    /// before calling this method.
     pub async fn continue_(&self) -> anyhow::Result<()> {
-        self.restore_session_context().await?;
         self.agent.continue_().await
     }
 
@@ -366,14 +372,16 @@ impl<M: SessionMetadata> AgentSession<M> {
     // Session context resolution
     // -----------------------------------------------------------------------
 
-    /// Resolve session context into `AgentMessage`s, using extension hooks
-    /// for compaction and branch summary formatting.
-    async fn resolve_session_messages(
+    /// Convert `SessionMessage`s from a pre-built context into `AgentMessage`s,
+    /// consulting extension hooks for compaction and branch summary formatting.
+    ///
+    /// This does **not** call `build_context()` — the caller provides the
+    /// already-built context.
+    async fn resolve_messages_from_context(
         &self,
+        session_ctx: &crate::types::SessionContext,
         cancel: CancellationToken,
-    ) -> anyhow::Result<(Vec<AgentMessage>, String, Option<crate::types::ModelRef>)> {
-        let session_ctx = self.session_manager.build_context().await?;
-
+    ) -> Vec<AgentMessage> {
         let mut messages = Vec::with_capacity(session_ctx.messages.len());
         for session_msg in &session_ctx.messages {
             match session_msg {
@@ -412,29 +420,7 @@ impl<M: SessionMetadata> AgentSession<M> {
                 }
             }
         }
-
-        Ok((messages, session_ctx.thinking_level, session_ctx.model))
-    }
-
-    /// Restore session context onto the agent state.
-    ///
-    /// Resolves the session tree into messages and updates the agent state.
-    /// Restores messages, system prompt, and thinking level. Model restoration
-    /// is a downstream concern (requires a model registry to resolve
-    /// `ModelRef` → `Model`).
-    async fn restore_session_context(&self) -> anyhow::Result<()> {
-        let (messages, thinking_level, _model_ref) = self
-            .resolve_session_messages(CancellationToken::new())
-            .await?;
-
-        // Restore transcript.
-        self.agent.set_messages(messages).await;
-
-        // Restore thinking level from session (parse string, fallback to Off).
-        let level = parse_thinking_level(&thinking_level);
-        self.agent.set_thinking_level(level).await;
-
-        Ok(())
+        messages
     }
 
     /// Get the current system prompt from agent state.
@@ -475,6 +461,221 @@ fn parse_thinking_level(s: &str) -> ThinkingLevel {
 }
 
 use std::fmt;
+
+// ---------------------------------------------------------------------------
+// create_agent_session — factory function
+// ---------------------------------------------------------------------------
+
+/// Inputs for [`create_agent_session`].
+///
+/// Collects all dependencies needed to construct a fully loaded, idle
+/// [`AgentSession`]. The generic parameter `M` is the session metadata type
+/// defined by the downstream application's storage backend.
+pub struct CreateAgentSessionOptions<M: SessionMetadata> {
+    /// Which model to use. Resolved to a full [`Model`] via `model_registry`.
+    pub model: ModelRef,
+    /// Model registry for resolving [`ModelRef`] → [`Model`].
+    pub model_registry: Arc<dyn ModelRegistry>,
+    /// Auth storage for resolving API keys at stream time.
+    pub auth_storage: Arc<dyn AuthStorage>,
+    /// Session storage backend.
+    pub session_manager: Arc<dyn SessionManager<M>>,
+    /// UI interface for notifications.
+    pub interface: Arc<dyn Interface>,
+    /// Extensions to register.
+    pub extensions: Vec<Box<dyn Extension>>,
+    /// Optional thinking level override. Defaults to [`ThinkingLevel::Off`].
+    pub thinking_level: Option<ThinkingLevel>,
+    /// Optional system prompt. Defaults to empty.
+    pub system_prompt: Option<String>,
+}
+
+/// Result of [`create_agent_session`].
+///
+/// The returned session is fully loaded and idle — ready for
+/// [`prompt`](AgentSession::prompt) or [`continue_`](AgentSession::continue_).
+pub struct CreateAgentSessionResult<M: SessionMetadata> {
+    /// The created session.
+    pub session: AgentSession<M>,
+    /// Non-fatal warnings collected during session creation.
+    pub warnings: Vec<String>,
+}
+
+impl<M: SessionMetadata> fmt::Debug for CreateAgentSessionResult<M> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CreateAgentSessionResult")
+            .field("session", &self.session)
+            .field("warnings", &self.warnings)
+            .finish()
+    }
+}
+
+/// Create a fully loaded, idle [`AgentSession`].
+///
+/// This is the primary way to construct an agent session. It:
+///
+/// 1. Resolves [`ModelRef`] → [`Model`] via the model registry
+/// 2. Validates that an API key is available for the model's provider
+/// 3. Initializes extensions and wires their hooks into the agent
+/// 4. Wires auth storage into the agent so API keys are resolved per-call
+/// 5. Restores session context (messages, thinking level) from storage
+/// 6. Persists initial model and thinking level for new sessions
+///
+/// The returned session is idle and ready for
+/// [`prompt`](AgentSession::prompt) or [`continue_`](AgentSession::continue_).
+///
+/// # Errors
+///
+/// Returns [`CreateAgentSessionError::ModelNotFound`] if the model registry
+/// cannot resolve the requested model, [`CreateAgentSessionError::ApiKeyNotFound`]
+/// if no API key is configured for the model's provider, or
+/// [`CreateAgentSessionError::Session`] if session storage fails.
+///
+/// # Example
+///
+/// ```no_run
+/// use ameli_agent::{
+///     create_agent_session, CreateAgentSessionOptions, NoopInterface,
+///     SessionManager, SessionMetadata,
+/// };
+/// use ameli_agent::types::ModelRef;
+/// use ameli_auth_storage::InMemoryAuthStorage;
+/// use ameli_model_registry::DefaultModelRegistry;
+/// use std::sync::Arc;
+///
+/// struct MyMetadata { id: String, created_at: String }
+/// impl SessionMetadata for MyMetadata {
+///     fn id(&self) -> &str { &self.id }
+///     fn created_at(&self) -> &str { &self.created_at }
+/// }
+///
+/// async fn example(
+///     session_manager: Arc<dyn SessionManager<MyMetadata>>,
+/// ) -> Result<(), ameli_agent::CreateAgentSessionError> {
+///     let auth_storage = Arc::new(InMemoryAuthStorage::new());
+///     let model_registry = Arc::new(DefaultModelRegistry::new());
+///
+///     let result = create_agent_session(CreateAgentSessionOptions {
+///         model: ModelRef { provider: "openai".into(), model_id: "gpt-4o".into() },
+///         model_registry,
+///         auth_storage,
+///         session_manager,
+///         interface: Arc::new(NoopInterface),
+///         extensions: vec![],
+///         thinking_level: None,
+///         system_prompt: None,
+///     }).await?;
+///
+///     // Session is ready for prompt, continue, command, etc.
+///     Ok(())
+/// }
+/// ```
+pub async fn create_agent_session<M: SessionMetadata>(
+    options: CreateAgentSessionOptions<M>,
+) -> Result<CreateAgentSessionResult<M>, CreateAgentSessionError> {
+    // 1. Resolve ModelRef → Model via the registry.
+    let model = options
+        .model_registry
+        .get_model(&options.model.provider, &options.model.model_id)?;
+
+    // 2. Validate that an API key exists (fail-fast).
+    options
+        .auth_storage
+        .get_api_key(&model.provider)
+        .await
+        .map_err(|_| CreateAgentSessionError::ApiKeyNotFound {
+            provider: model.provider.clone(),
+        })?;
+
+    // 3. Initialize extensions.
+    let handlers = init_extensions(&options.extensions);
+    let runner = Arc::new(ExtensionRunner::with_interface(
+        handlers,
+        options.interface.clone(),
+    ));
+
+    // 4. Build AgentOptions.
+    let thinking_level = options.thinking_level.unwrap_or(ThinkingLevel::Off);
+    let tools = runner.get_registered_tools();
+    let auth_storage = options.auth_storage.clone();
+
+    let mut agent_options = AgentOptions {
+        initial_state: Some(AgentState {
+            system_prompt: options.system_prompt.unwrap_or_default(),
+            model: model.clone(),
+            thinking_level,
+            tools,
+            messages: Vec::new(),
+            is_streaming: false,
+            streaming_message: None,
+            pending_tool_calls: HashSet::new(),
+            error_message: None,
+        }),
+        get_api_key: Some(Arc::new(move |provider: &str| {
+            let auth_storage = auth_storage.clone();
+            let provider = provider.to_string();
+            Box::pin(async move { auth_storage.get_api_key(&provider).await.ok() })
+        })),
+        api_registry: Some(ameli_ai::api::DEFAULT_API_REGISTRY.clone()),
+        ..Default::default()
+    };
+
+    // 5. Install extension hooks (before_tool_call, after_tool_call, transform_context).
+    runner.install_hooks(&mut agent_options);
+
+    // 6. Construct ArcAgent.
+    let agent = ArcAgent::new(agent_options);
+
+    // 7. Construct AgentSession.
+    let session = AgentSession::new(AgentSessionConfig {
+        agent,
+        session_manager: options.session_manager.clone(),
+        runner: runner.clone(),
+        interface: options.interface.clone(),
+    })
+    .await;
+
+    // 8. Restore session context from storage (only if session has existing data).
+    let session_ctx = options.session_manager.build_context().await?;
+    let has_existing_session = !session_ctx.messages.is_empty();
+
+    if has_existing_session {
+        // Existing session: restore messages and thinking level.
+        let messages = session
+            .resolve_messages_from_context(&session_ctx, CancellationToken::new())
+            .await;
+        session.agent.set_messages(messages).await;
+        let level = parse_thinking_level(&session_ctx.thinking_level);
+        session.agent.set_thinking_level(level).await;
+    } else {
+        // New session: persist initial model and thinking level.
+        options
+            .session_manager
+            .append_model_change(&model.provider, &model.id)
+            .await?;
+        options
+            .session_manager
+            .append_thinking_level_change(thinking_level_to_str(thinking_level))
+            .await?;
+    }
+
+    Ok(CreateAgentSessionResult {
+        session,
+        warnings: Vec::new(),
+    })
+}
+
+/// Convert a [`ThinkingLevel`] to its session storage string.
+fn thinking_level_to_str(level: ThinkingLevel) -> &'static str {
+    match level {
+        ThinkingLevel::Off => "off",
+        ThinkingLevel::Minimal => "minimal",
+        ThinkingLevel::Low => "low",
+        ThinkingLevel::Medium => "medium",
+        ThinkingLevel::High => "high",
+        ThinkingLevel::XHigh => "xhigh",
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -871,99 +1072,71 @@ mod tests {
 
     // -- Session context resolution tests -----------------------------------
 
+    use crate::types::SessionMessage;
+
     #[tokio::test]
-    async fn resolve_session_messages_empty() {
+    async fn resolve_messages_from_context_empty() {
         let agent = test_agent();
         let session = test_session(agent).await;
 
-        let (messages, thinking_level, model) = session
-            .resolve_session_messages(CancellationToken::new())
-            .await
-            .unwrap();
-
+        let ctx = SessionContext {
+            messages: vec![],
+            thinking_level: "off".into(),
+            model: None,
+        };
+        let messages = session
+            .resolve_messages_from_context(&ctx, CancellationToken::new())
+            .await;
         assert!(messages.is_empty());
-        assert_eq!(thinking_level, "off");
-        assert!(model.is_none());
     }
 
     #[tokio::test]
-    async fn resolve_session_messages_with_messages() {
+    async fn resolve_messages_from_context_with_agent_message() {
         let agent = test_agent();
-        let sm = Arc::new(TestSessionManager::new());
+        let session = test_session(agent).await;
 
-        // Append a user message to the session
-        sm.append_message(AgentMessage::User(ameli_ai::types::UserMessage::text(
-            "hello",
-        )))
-        .await
-        .unwrap();
-
-        let runner = Arc::new(ExtensionRunner::from_extensions(&[Box::new(
-            NoCommandsExtension,
-        )]));
-        let session = AgentSession::new(AgentSessionConfig {
-            agent,
-            session_manager: sm,
-            runner,
-            interface: Arc::new(NoopInterface),
-        })
-        .await;
-
-        let (messages, _, _) = session
-            .resolve_session_messages(CancellationToken::new())
-            .await
-            .unwrap();
-
+        let ctx = SessionContext {
+            messages: vec![SessionMessage::Agent(Box::new(AgentMessage::User(
+                ameli_ai::types::UserMessage::text("hello"),
+            )))],
+            thinking_level: "off".into(),
+            model: None,
+        };
+        let messages = session
+            .resolve_messages_from_context(&ctx, CancellationToken::new())
+            .await;
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].role(), "user");
     }
 
     #[tokio::test]
-    async fn resolve_session_messages_with_compaction_default() {
+    async fn resolve_messages_from_context_with_compaction_default() {
         let agent = test_agent();
-        let sm = Arc::new(TestSessionManager::new());
-
-        // Append a message then a compaction
-        let entry_id = sm
-            .append_message(AgentMessage::User(ameli_ai::types::UserMessage::text(
-                "old message",
-            )))
-            .await
-            .unwrap();
-        sm.append_compaction("summary of old", &entry_id, 1000, None, false)
-            .await
-            .unwrap();
+        let session = test_session(agent).await;
 
         // No format_compaction_summary handlers → default formatting
-        let runner = Arc::new(ExtensionRunner::from_extensions(&[]));
-        let session = AgentSession::new(AgentSessionConfig {
-            agent,
-            session_manager: sm,
-            runner,
-            interface: Arc::new(NoopInterface),
-        })
-        .await;
-
-        let (messages, _, _) = session
-            .resolve_session_messages(CancellationToken::new())
-            .await
-            .unwrap();
-
-        // Expect: compaction summary (default) + kept message
-        assert!(messages.len() >= 1);
-        // First message should be the compaction summary (a user message wrapping the summary)
-        let first = &messages[0];
-        assert_eq!(first.role(), "user");
+        let ctx = SessionContext {
+            messages: vec![SessionMessage::Compaction {
+                summary: "summary of old".into(),
+                timestamp: 1000,
+            }],
+            thinking_level: "off".into(),
+            model: None,
+        };
+        let messages = session
+            .resolve_messages_from_context(&ctx, CancellationToken::new())
+            .await;
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role(), "user");
     }
 
     // -- State mutation wiring tests -------------------------------------------
 
     #[tokio::test]
-    async fn restore_session_context_sets_messages() {
-        let _agent = test_agent();
+    async fn create_agent_session_restores_messages_from_existing_session() {
         let sm = Arc::new(TestSessionManager::new());
 
-        // Append messages to session
+        // Pre-populate session with messages
         sm.append_message(AgentMessage::User(ameli_ai::types::UserMessage::text(
             "hello",
         )))
@@ -974,7 +1147,7 @@ mod tests {
                 ameli_ai::types::TextContent::new("hi there"),
             )],
             api: "test".into(),
-            provider: "test".into(),
+            provider: "test-provider".into(),
             model: "test-model".into(),
             response_model: None,
             response_id: None,
@@ -986,61 +1159,69 @@ mod tests {
         .await
         .unwrap();
 
-        let runner = Arc::new(ExtensionRunner::from_extensions(&[]));
-        let session = AgentSession::new(AgentSessionConfig {
-            agent: ArcAgent::new(ameli_agent_core::AgentOptions {
-                initial_state: Some(AgentState {
-                    system_prompt: String::new(),
-                    model: test_model(),
-                    thinking_level: ThinkingLevel::Off,
-                    tools: vec![],
-                    messages: vec![],
-                    is_streaming: false,
-                    streaming_message: None,
-                    pending_tool_calls: HashSet::new(),
-                    error_message: None,
-                }),
-                ..Default::default()
-            }),
-            session_manager: sm,
-            runner,
+        let result = create_agent_session(CreateAgentSessionOptions {
+            model: ModelRef {
+                provider: "test-provider".into(),
+                model_id: "test-model".into(),
+            },
+            model_registry: test_model_registry(),
+            auth_storage: test_auth_storage(),
+            session_manager: sm.clone(),
             interface: Arc::new(NoopInterface),
+            extensions: vec![],
+            thinking_level: None,
+            system_prompt: None,
         })
-        .await;
+        .await
+        .unwrap();
 
-        // Before restore, agent has no messages
-        assert!(session.agent.state().await.messages.is_empty());
-
-        // Restore session context
-        session.restore_session_context().await.unwrap();
-
-        // After restore, agent has the session messages
-        let state = session.agent.state().await;
+        let state = result.session.agent().state().await;
         assert_eq!(state.messages.len(), 2);
         assert_eq!(state.messages[0].role(), "user");
         assert_eq!(state.messages[1].role(), "assistant");
+
+        // No model_change should be persisted (session already had data)
+        let entries = sm.entries().await.unwrap();
+        let model_changes: Vec<_> = entries
+            .iter()
+            .filter(|e| matches!(e, crate::types::SessionEntry::ModelChange(_)))
+            .collect();
+        assert_eq!(
+            model_changes.len(),
+            0,
+            "should not persist model change for existing session"
+        );
     }
 
     #[tokio::test]
-    async fn restore_session_context_sets_thinking_level() {
-        let agent = test_agent();
+    async fn create_agent_session_restores_thinking_level_from_existing_session() {
         let sm = Arc::new(TestSessionManager::new());
 
-        // Append a thinking level change
+        // Pre-populate with a message and thinking level change
+        sm.append_message(AgentMessage::User(ameli_ai::types::UserMessage::text(
+            "hello",
+        )))
+        .await
+        .unwrap();
         sm.append_thinking_level_change("medium").await.unwrap();
 
-        let runner = Arc::new(ExtensionRunner::from_extensions(&[]));
-        let session = AgentSession::new(AgentSessionConfig {
-            agent,
+        let result = create_agent_session(CreateAgentSessionOptions {
+            model: ModelRef {
+                provider: "test-provider".into(),
+                model_id: "test-model".into(),
+            },
+            model_registry: test_model_registry(),
+            auth_storage: test_auth_storage(),
             session_manager: sm,
-            runner,
             interface: Arc::new(NoopInterface),
+            extensions: vec![],
+            thinking_level: None,
+            system_prompt: None,
         })
-        .await;
+        .await
+        .unwrap();
 
-        session.restore_session_context().await.unwrap();
-
-        let state = session.agent.state().await;
+        let state = result.session.agent().state().await;
         assert_eq!(state.thinking_level, ThinkingLevel::Medium);
     }
 
@@ -1141,5 +1322,185 @@ mod tests {
         } else {
             panic!("Expected Message entry");
         }
+    }
+
+    // -- create_agent_session tests ---------------------------------------------
+
+    use ameli_auth_storage::InMemoryAuthStorage;
+    use ameli_model_registry::DefaultModelRegistry;
+
+    /// Helper: register a test model and return the registry.
+    fn test_model_registry() -> Arc<DefaultModelRegistry> {
+        let registry = Arc::new(DefaultModelRegistry::new());
+        registry.register(test_model());
+        registry
+    }
+
+    /// Helper: create auth storage with a test API key.
+    fn test_auth_storage() -> Arc<InMemoryAuthStorage> {
+        let storage = Arc::new(InMemoryAuthStorage::new());
+        storage.set_api_key("test-provider", "test-key".to_string());
+        storage
+    }
+
+    #[tokio::test]
+    async fn create_agent_session_succeeds_with_valid_inputs() {
+        let result = create_agent_session(CreateAgentSessionOptions {
+            model: ModelRef {
+                provider: "test-provider".into(),
+                model_id: "test-model".into(),
+            },
+            model_registry: test_model_registry(),
+            auth_storage: test_auth_storage(),
+            session_manager: Arc::new(TestSessionManager::new()),
+            interface: Arc::new(NoopInterface),
+            extensions: vec![],
+            thinking_level: None,
+            system_prompt: None,
+        })
+        .await;
+
+        assert!(result.is_ok(), "expected Ok, got {:?}", result.err());
+        let result = result.unwrap();
+        assert!(!result.session.is_active().await);
+        assert!(result.warnings.is_empty());
+    }
+
+    #[tokio::test]
+    async fn create_agent_session_fails_for_unknown_model() {
+        let result = create_agent_session(CreateAgentSessionOptions {
+            model: ModelRef {
+                provider: "unknown-provider".into(),
+                model_id: "unknown-model".into(),
+            },
+            model_registry: test_model_registry(),
+            auth_storage: test_auth_storage(),
+            session_manager: Arc::new(TestSessionManager::new()),
+            interface: Arc::new(NoopInterface),
+            extensions: vec![],
+            thinking_level: None,
+            system_prompt: None,
+        })
+        .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, CreateAgentSessionError::ModelNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn create_agent_session_fails_for_missing_api_key() {
+        // Auth storage with no key for test-provider
+        let auth_storage = Arc::new(InMemoryAuthStorage::new());
+
+        let result = create_agent_session(CreateAgentSessionOptions {
+            model: ModelRef {
+                provider: "test-provider".into(),
+                model_id: "test-model".into(),
+            },
+            model_registry: test_model_registry(),
+            auth_storage,
+            session_manager: Arc::new(TestSessionManager::new()),
+            interface: Arc::new(NoopInterface),
+            extensions: vec![],
+            thinking_level: None,
+            system_prompt: None,
+        })
+        .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, CreateAgentSessionError::ApiKeyNotFound { provider } if provider == "test-provider")
+        );
+    }
+
+    #[tokio::test]
+    async fn create_agent_session_sets_model_and_thinking_level() {
+        let result = create_agent_session(CreateAgentSessionOptions {
+            model: ModelRef {
+                provider: "test-provider".into(),
+                model_id: "test-model".into(),
+            },
+            model_registry: test_model_registry(),
+            auth_storage: test_auth_storage(),
+            session_manager: Arc::new(TestSessionManager::new()),
+            interface: Arc::new(NoopInterface),
+            extensions: vec![],
+            thinking_level: Some(ThinkingLevel::High),
+            system_prompt: Some("You are helpful.".into()),
+        })
+        .await
+        .unwrap();
+
+        let state = result.session.agent().state().await;
+        assert_eq!(state.model.id, "test-model");
+        assert_eq!(state.thinking_level, ThinkingLevel::High);
+        assert_eq!(state.system_prompt, "You are helpful.");
+    }
+
+    #[tokio::test]
+    async fn create_agent_session_persists_model_for_new_session() {
+        let sm = Arc::new(TestSessionManager::new());
+
+        let result = create_agent_session(CreateAgentSessionOptions {
+            model: ModelRef {
+                provider: "test-provider".into(),
+                model_id: "test-model".into(),
+            },
+            model_registry: test_model_registry(),
+            auth_storage: test_auth_storage(),
+            session_manager: sm.clone(),
+            interface: Arc::new(NoopInterface),
+            extensions: vec![],
+            thinking_level: Some(ThinkingLevel::Medium),
+            system_prompt: None,
+        })
+        .await
+        .unwrap();
+
+        // Session should be idle and have persisted model + thinking level
+        assert!(!result.session.is_active().await);
+
+        let entries = sm.entries().await.unwrap();
+        // Should have a model_change and thinking_level_change entry
+        let model_changes: Vec<_> = entries
+            .iter()
+            .filter(|e| matches!(e, crate::types::SessionEntry::ModelChange(_)))
+            .collect();
+        let thinking_changes: Vec<_> = entries
+            .iter()
+            .filter(|e| matches!(e, crate::types::SessionEntry::ThinkingLevelChange(_)))
+            .collect();
+        assert_eq!(model_changes.len(), 1);
+        assert_eq!(thinking_changes.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn create_agent_session_with_extensions() {
+        struct TestExtension;
+        impl Extension for TestExtension {
+            fn name(&self) -> &str {
+                "test-ext"
+            }
+            fn init(&self, _api: &mut ExtensionApi) {}
+        }
+
+        let result = create_agent_session(CreateAgentSessionOptions {
+            model: ModelRef {
+                provider: "test-provider".into(),
+                model_id: "test-model".into(),
+            },
+            model_registry: test_model_registry(),
+            auth_storage: test_auth_storage(),
+            session_manager: Arc::new(TestSessionManager::new()),
+            interface: Arc::new(NoopInterface),
+            extensions: vec![Box::new(TestExtension)],
+            thinking_level: None,
+            system_prompt: None,
+        })
+        .await;
+
+        assert!(result.is_ok());
     }
 }
