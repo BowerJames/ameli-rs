@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 ameli-ai = { path = "../ameli-ai" }
+ameli-model-registry = { path = "../ameli-model-registry" }
 
 # External crates inherited from the root workspace
 serde_json = { workspace = true }
