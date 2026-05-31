@@ -9,8 +9,8 @@
 //! Uses `RwLock` for both the entry store and the leaf pointer so concurrent
 //! reads are not blocked by each other; only writes take a write lock.
 
-use crate::manager::{AsyncResult, BranchSummaryData, SessionManager, SessionMetadata};
-use crate::types::{
+use super::manager::{AsyncResult, BranchSummaryData, SessionManager, SessionMetadata};
+use super::types::{
     BranchSummaryEntry, CompactionEntry, CustomEntry, CustomMessageContent, CustomMessageEntry,
     MessageEntry, ModelChangeEntry, ModelRef, SessionContext, SessionEntry, SessionMessage,
     ThinkingLevelChangeEntry,
@@ -122,7 +122,7 @@ impl State {
 /// # Examples
 ///
 /// ```
-/// use ameli_session_manager::{InMemorySessionManager, SessionManager};
+/// use ameli_agent::session_manager::{InMemorySessionManager, SessionManager};
 /// use ameli_agent_core::types::AgentMessage;
 ///
 /// # #[tokio::main]

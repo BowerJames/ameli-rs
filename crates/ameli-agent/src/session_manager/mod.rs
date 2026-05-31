@@ -1,6 +1,6 @@
 //! Session management trait and in-memory implementation.
 //!
-//! This crate defines [`SessionManager<M>`] — the single trait that session
+//! This module defines [`SessionManager<M>`] — the single trait that session
 //! backends implement — and provides [`InMemorySessionManager`] as a
 //! reference implementation backed by interior-mutable `HashMap` storage.
 //!

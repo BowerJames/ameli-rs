@@ -310,7 +310,7 @@ pub struct BeforeAgentStartMessage {
     /// Custom type discriminator (e.g. `"context"`, `"rules"`).
     pub custom_type: String,
     /// Message content (plain text or rich media blocks).
-    pub content: ameli_session_manager::CustomMessageContent,
+    pub content: crate::session_manager::CustomMessageContent,
     /// Whether this message should be visible in the UI.
     pub display: bool,
     /// Optional structured details for downstream consumption.
