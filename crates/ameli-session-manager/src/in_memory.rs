@@ -89,6 +89,16 @@ impl State {
         chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
     }
 
+    /// Parse an ISO 8601 timestamp string to unix milliseconds.
+    ///
+    /// Falls back to `0` if parsing fails, matching the graceful degradation
+    /// pattern used elsewhere in the crate.
+    fn parse_timestamp_ms(iso: &str) -> u64 {
+        chrono::DateTime::parse_from_rfc3339(iso)
+            .map(|dt| dt.timestamp_millis() as u64)
+            .unwrap_or(0)
+    }
+
     /// Insert an entry and update the leaf pointer.
     fn insert_entry(&mut self, entry: SessionEntry) -> String {
         let id = entry.id().to_string();
@@ -280,13 +290,13 @@ impl SessionManager<InMemoryMetadata> for InMemorySessionManager {
                     SessionEntry::Compaction(e) => {
                         messages.push(SessionMessage::Compaction {
                             summary: e.summary.clone(),
-                            timestamp: 0, // Compaction entries don't carry a numeric timestamp
+                            timestamp: State::parse_timestamp_ms(&e.timestamp),
                         });
                     }
                     SessionEntry::BranchSummary(e) => {
                         messages.push(SessionMessage::BranchSummary {
                             summary: e.summary.clone(),
-                            timestamp: 0,
+                            timestamp: State::parse_timestamp_ms(&e.timestamp),
                         });
                     }
                     // Custom and CustomMessage entries are not part of LLM context.
