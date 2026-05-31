@@ -22,6 +22,9 @@ pub enum ThinkingFormat {
     OpenAi,
     /// ZAI / Qwen style: top-level `enable_thinking: true/false`.
     Zai,
+    /// DeepSeek style: uses `reasoning_effort` like OpenAI but has different
+    /// response-side handling for reasoning content.
+    Deepseek,
 }
 
 // ---------------------------------------------------------------------------
@@ -101,6 +104,11 @@ pub struct OpenAICompletionsCompat {
     /// Default: `true`.
     #[serde(default = "default_true")]
     pub supports_strict_mode: bool,
+
+    /// Whether the provider requires `reasoning_content` on assistant messages
+    /// in the conversation history. DeepSeek/Xiaomi need this. Default: `false`.
+    #[serde(default)]
+    pub requires_reasoning_content_on_assistant_messages: bool,
 }
 
 fn default_true() -> bool {
@@ -118,6 +126,7 @@ impl Default for OpenAICompletionsCompat {
             thinking_format: ThinkingFormat::OpenAi,
             zai_tool_stream: false,
             supports_strict_mode: true,
+            requires_reasoning_content_on_assistant_messages: false,
         }
     }
 }
@@ -185,6 +194,20 @@ mod tests {
         assert_eq!(compat.thinking_format, ThinkingFormat::Zai);
         assert!(compat.supports_store); // default
         assert!(compat.supports_developer_role); // default
+    }
+
+    #[test]
+    fn deepseek_compat_deserializes() {
+        let json = serde_json::json!({
+            "thinkingFormat": "deepseek",
+            "requiresReasoningContentOnAssistantMessages": true
+        });
+        let compat: OpenAICompletionsCompat = serde_json::from_value(json).unwrap();
+        assert_eq!(compat.thinking_format, ThinkingFormat::Deepseek);
+        assert!(compat.requires_reasoning_content_on_assistant_messages);
+        // Other fields should be defaults
+        assert!(compat.supports_store);
+        assert!(compat.supports_developer_role);
     }
 
     #[test]

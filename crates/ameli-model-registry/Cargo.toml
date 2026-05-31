@@ -9,6 +9,21 @@ license.workspace = true
 [dependencies]
 ameli-ai = { path = "../ameli-ai" }
 thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+
+# Optional dependencies for the generate-models binary
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+tokio = { workspace = true, optional = true }
 
 [lints]
 workspace = true
+
+[features]
+generate = ["reqwest", "tokio"]
+
+[[bin]]
+name = "generate-models"
+path = "src/bin/generate-models.rs"
+required-features = ["generate"]

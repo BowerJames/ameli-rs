@@ -1,0 +1,141 @@
+[
+  {
+    "id": "groq",
+    "modelsDevKey": "groq",
+    "baseUrl": "https://api.groq.com/openai/v1",
+    "api": "openai-completions",
+    "compat": {
+      "supportsStore": false,
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false
+    }
+  },
+  {
+    "id": "cerebras",
+    "modelsDevKey": "cerebras",
+    "baseUrl": "https://api.cerebras.ai/v1",
+    "api": "openai-completions",
+    "compat": {
+      "supportsStore": false,
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false
+    }
+  },
+  {
+    "id": "xai",
+    "modelsDevKey": "xai",
+    "baseUrl": "https://api.x.ai/v1",
+    "api": "openai-completions",
+    "compat": {}
+  },
+  {
+    "id": "huggingface",
+    "modelsDevKey": "huggingface",
+    "baseUrl": "https://router.huggingface.co/v1",
+    "api": "openai-completions",
+    "compat": {
+      "supportsDeveloperRole": false
+    }
+  },
+  {
+    "id": "together",
+    "modelsDevKey": "togetherai",
+    "baseUrl": "https://api.together.ai/v1",
+    "api": "openai-completions",
+    "compat": {
+      "supportsStore": false,
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "maxTokensField": "max_tokens",
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "deepseek",
+    "modelsDevKey": "deepseek",
+    "baseUrl": "https://api.deepseek.com",
+    "api": "openai-completions",
+    "compat": {
+      "thinkingFormat": "deepseek",
+      "requiresReasoningContentOnAssistantMessages": true
+    }
+  },
+  {
+    "id": "xiaomi",
+    "modelsDevKey": "xiaomi",
+    "baseUrl": "https://api.xiaomimimo.com/v1",
+    "api": "openai-completions",
+    "compat": {
+      "thinkingFormat": "deepseek",
+      "requiresReasoningContentOnAssistantMessages": true
+    }
+  },
+  {
+    "id": "xiaomi-token-plan-cn",
+    "modelsDevKey": "xiaomi",
+    "baseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
+    "api": "openai-completions",
+    "compat": {
+      "thinkingFormat": "deepseek",
+      "requiresReasoningContentOnAssistantMessages": true
+    }
+  },
+  {
+    "id": "xiaomi-token-plan-ams",
+    "modelsDevKey": "xiaomi",
+    "baseUrl": "https://token-plan-ams.xiaomimimo.com/v1",
+    "api": "openai-completions",
+    "compat": {
+      "thinkingFormat": "deepseek",
+      "requiresReasoningContentOnAssistantMessages": true
+    }
+  },
+  {
+    "id": "xiaomi-token-plan-sgp",
+    "modelsDevKey": "xiaomi",
+    "baseUrl": "https://token-plan-sgp.xiaomimimo.com/v1",
+    "api": "openai-completions",
+    "compat": {
+      "thinkingFormat": "deepseek",
+      "requiresReasoningContentOnAssistantMessages": true
+    }
+  },
+  {
+    "id": "zai",
+    "modelsDevKey": "zai-coding-plan",
+    "baseUrl": "https://api.z.ai/api/coding/paas/v4",
+    "api": "openai-completions",
+    "compat": {
+      "thinkingFormat": "zai",
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "zaiToolStream": true
+    }
+  },
+  {
+    "id": "moonshotai",
+    "modelsDevKey": "moonshotai",
+    "baseUrl": "https://api.moonshot.ai/v1",
+    "api": "openai-completions",
+    "compat": {
+      "supportsStore": false,
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "maxTokensField": "max_tokens",
+      "supportsStrictMode": false
+    }
+  },
+  {
+    "id": "moonshotai-cn",
+    "modelsDevKey": "moonshotai-cn",
+    "baseUrl": "https://api.moonshot.cn/v1",
+    "api": "openai-completions",
+    "compat": {
+      "supportsStore": false,
+      "supportsDeveloperRole": false,
+      "supportsReasoningEffort": false,
+      "maxTokensField": "max_tokens",
+      "supportsStrictMode": false
+    }
+  }
+]

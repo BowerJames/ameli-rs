@@ -12,8 +12,9 @@
 //!   inherent on [`DefaultModelRegistry`], not part of the trait.
 //! - **Dedicated error type** — [`ModelNotFoundError`] distinguishes "unknown
 //!   provider" from "unknown model for a known provider".
-//! - **Global starts empty** — [`DEFAULT_MODEL_REGISTRY`] initialises with no
-//!   models registered. Downstream applications populate it as needed.
+//! - **Global starts with built-in models** — [`DEFAULT_MODEL_REGISTRY`] initialises
+//!   with models from [models.dev](https://models.dev). Downstream applications
+//!   can add more at runtime.
 //!
 //! # Example
 //!
@@ -50,6 +51,8 @@
 use ameli_ai::types::Model;
 use std::collections::HashMap;
 use std::sync::{LazyLock, RwLock};
+
+mod built_in;
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -230,10 +233,13 @@ impl ModelRegistry for DefaultModelRegistry {
 
 /// Global default model registry.
 ///
-/// Starts empty. Use [`register_global`] or access the registry directly to
-/// populate it at runtime.
-pub static DEFAULT_MODEL_REGISTRY: LazyLock<DefaultModelRegistry> =
-    LazyLock::new(DefaultModelRegistry::new);
+/// Starts with built-in models from models.dev pre-loaded. Use
+/// [`register_global`] or access the registry directly to add more at runtime.
+pub static DEFAULT_MODEL_REGISTRY: LazyLock<DefaultModelRegistry> = LazyLock::new(|| {
+    let registry = DefaultModelRegistry::new();
+    built_in::register_built_in_models(&registry);
+    registry
+});
 
 /// Convenience function that looks up a model in the [`DEFAULT_MODEL_REGISTRY`].
 ///
