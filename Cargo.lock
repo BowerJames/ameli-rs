@@ -68,10 +68,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ameli-auth-storage"
+version = "0.1.0"
+dependencies = [
+ "temp-env",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "ameli-cli"
 version = "0.1.0"
 dependencies = [
  "ameli-ai",
+ "ameli-model-registry",
  "anyhow",
  "clap",
  "serde_json",
@@ -1428,6 +1438,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "temp-env"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96374855068f47402c3121c6eed88d29cb1de8f3ab27090e273e420bdabcf050"
+dependencies = [
+ "parking_lot",
 ]
 
 [[package]]
