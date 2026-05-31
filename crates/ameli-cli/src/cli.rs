@@ -90,6 +90,10 @@ async fn run_complete(args: CompleteArgs) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let api_key = resolve_api_key(&args.provider, args.api_key);
+    if api_key.is_none() {
+        let env_name = format!("{}_API_KEY", args.provider.to_uppercase());
+        eprintln!("Warning: no API key found. Set --api-key, {env_name}, or OPENAI_API_KEY.");
+    }
 
     let context = Context {
         system_prompt: Some(args.system_prompt),
