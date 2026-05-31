@@ -43,15 +43,21 @@ pub mod agent_session;
 pub mod error;
 pub mod extension;
 pub mod interface;
-pub mod session_manager;
-pub mod types;
+
+// Re-export session types from ameli-session-manager for backward compatibility.
+pub use ameli_session_manager::{
+    BranchSummaryData, BranchSummaryEntry, CompactionEntry, CustomEntry, CustomMessageContent,
+    CustomMessageEntry, InMemoryMetadata, InMemorySessionManager, MessageEntry, ModelChangeEntry,
+    ModelRef, SessionContext, SessionEntry, SessionError, SessionManager, SessionMessage,
+    SessionMetadata, ThinkingLevelChangeEntry,
+};
 
 // Re-export primary types for convenience.
 pub use agent_session::{
     create_agent_session, AgentSession, AgentSessionConfig, CreateAgentSessionOptions,
     CreateAgentSessionResult,
 };
-pub use error::{CreateAgentSessionError, SessionError};
+pub use error::CreateAgentSessionError;
 pub use extension::{
     BeforeAgentStartEvent, BeforeAgentStartMessage, BeforeAgentStartResult, CommandContext,
     Extension, ExtensionApi, ExtensionContext, ExtensionError, ExtensionRunner, MessageEndResult,
@@ -59,9 +65,3 @@ pub use extension::{
     SessionStartReason, ToolExecutionUpdateEvent,
 };
 pub use interface::{CustomNotifyMessage, Interface, NoopInterface, NotifyKind, NotifyMessage};
-pub use session_manager::{BranchSummaryData, SessionManager, SessionMetadata};
-pub use types::{
-    BranchSummaryEntry, CompactionEntry, CustomEntry, CustomMessageContent, CustomMessageEntry,
-    MessageEntry, ModelChangeEntry, ModelRef, SessionContext, SessionEntry, SessionMessage,
-    ThinkingLevelChangeEntry,
-};
