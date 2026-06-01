@@ -95,6 +95,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ameli-multi-agent-resource-loader"
+version = "0.1.0"
+dependencies = [
+ "ameli-agent",
+ "ameli-agent-core",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
