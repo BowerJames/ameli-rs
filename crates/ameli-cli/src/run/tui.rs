@@ -113,6 +113,7 @@ pub async fn run(session: Arc<AgentSession<InMemoryMetadata>>) -> Result<()> {
     // 2. Create channels
     let (agent_tx, mut agent_rx) = mpsc::unbounded_channel::<AgentEvent>();
     let (key_tx, mut key_rx) = mpsc::unbounded_channel::<KeyEvent>();
+    let (error_tx, mut error_rx) = mpsc::unbounded_channel::<String>();
 
     // 3. Subscribe to agent events
     let _subscription = session
@@ -152,12 +153,17 @@ pub async fn run(session: Arc<AgentSession<InMemoryMetadata>>) -> Result<()> {
         tokio::select! {
             key = key_rx.recv() => {
                 if let Some(key) = key {
-                    handle_key(key, &mut state, &session);
+                    handle_key(key, &mut state, &session, &error_tx);
                 }
             }
             event = agent_rx.recv() => {
                 if let Some(event) = event {
                     handle_agent_event(event, &mut state);
+                }
+            }
+            err = error_rx.recv() => {
+                if let Some(err) = err {
+                    state.entries.push(ChatEntry::Error { message: err });
                 }
             }
         }
@@ -292,7 +298,12 @@ fn handle_agent_event(event: AgentEvent, state: &mut TuiState) {
 // ---------------------------------------------------------------------------
 
 /// Handle a keyboard event.
-fn handle_key(key: KeyEvent, state: &mut TuiState, session: &Arc<AgentSession<InMemoryMetadata>>) {
+fn handle_key(
+    key: KeyEvent,
+    state: &mut TuiState,
+    session: &Arc<AgentSession<InMemoryMetadata>>,
+    error_tx: &mpsc::UnboundedSender<String>,
+) {
     match key.code {
         KeyCode::Char(c) => {
             state.input.push(c);
@@ -308,26 +319,38 @@ fn handle_key(key: KeyEvent, state: &mut TuiState, session: &Arc<AgentSession<In
 
             if text.starts_with('/') {
                 let (name, args) = parse_command(&text);
+                if name.is_empty() {
+                    // Bare `/` with no command name — ignore
+                    return;
+                }
                 let name = name.to_string();
                 let args = args.to_string();
                 let session = session.clone();
+                let error_tx = error_tx.clone();
                 tokio::spawn(async move {
-                    let _ = session.command(&name, &args).await;
+                    if let Err(e) = session.command(&name, &args).await {
+                        let _ = error_tx.send(format!("Command '{name}' failed: {e}"));
+                    }
                 });
             } else if state.agent_active {
-                // Steering message — queue for next turn
-                state.entries.push(ChatEntry::User { text: text.clone() });
+                // Steering message — queue for next turn.
+                // Do NOT push ChatEntry::User here; the agent event subscriber
+                // emits MessageStart(User) which adds it to the chat log.
                 let msg = AgentMessage::User(UserMessage::text(&text));
                 let agent = session.agent().clone();
                 tokio::spawn(async move {
                     agent.steer(msg).await;
                 });
             } else {
-                // New prompt
-                state.entries.push(ChatEntry::User { text: text.clone() });
+                // New prompt.
+                // Do NOT push ChatEntry::User here; the agent event subscriber
+                // emits MessageStart(User) which adds it to the chat log.
                 let session = session.clone();
+                let error_tx = error_tx.clone();
                 tokio::spawn(async move {
-                    let _ = session.prompt(&text, vec![]).await;
+                    if let Err(e) = session.prompt(&text, vec![]).await {
+                        let _ = error_tx.send(format!("Prompt failed: {e}"));
+                    }
                 });
             }
         }
@@ -545,8 +568,10 @@ fn extract_tool_result_text(content: &[ameli_ai::types::MediaContentBlock]) -> S
 }
 
 /// Truncate a string to `max_len` characters with "…" appended.
+///
+/// Operates on Unicode code points (not bytes) for correct multi-byte handling.
 fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
+    if s.chars().count() <= max_len {
         s.to_string()
     } else {
         let mut truncated: String = s.chars().take(max_len - 1).collect();
