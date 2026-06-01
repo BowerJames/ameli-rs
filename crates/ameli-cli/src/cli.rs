@@ -2,7 +2,8 @@
 //!
 //! ```text
 //! ameli
-//!  └── complete   — single-shot LLM completion
+//!  ├── complete   — single-shot LLM completion
+//!  └── run        — interactive agent TUI
 //! ```
 
 use ameli_ai::types::{
@@ -33,6 +34,9 @@ pub struct Cli {
 pub enum Commands {
     /// Perform a single-shot LLM completion and print the result.
     Complete(CompleteArgs),
+
+    /// Launch an interactive agent session with an append-only TUI.
+    Run(RunArgs),
 }
 
 // ---------------------------------------------------------------------------
@@ -68,6 +72,34 @@ pub struct CompleteArgs {
 }
 
 // ---------------------------------------------------------------------------
+// `ameli run` arguments
+// ---------------------------------------------------------------------------
+
+/// Arguments for `ameli run`.
+#[derive(Debug, Parser)]
+pub struct RunArgs {
+    /// Provider name (e.g. "openai", "anthropic").
+    #[arg(long, short)]
+    pub provider: String,
+
+    /// Model ID (e.g. "gpt-4o").
+    #[arg(long, short)]
+    pub model: String,
+
+    /// Path to a compiled extension dylib. Can be repeated.
+    #[arg(long, short = 'e', action = clap::ArgAction::Append)]
+    pub extension: Vec<String>,
+
+    /// API key. Stored in auth storage for the provider.
+    #[arg(long)]
+    pub api_key: Option<String>,
+
+    /// Thinking/reasoning level: off, minimal, low, medium, high, xhigh.
+    #[arg(long, default_value = "off")]
+    pub thinking: String,
+}
+
+// ---------------------------------------------------------------------------
 // Dispatch
 // ---------------------------------------------------------------------------
 
@@ -75,6 +107,7 @@ pub struct CompleteArgs {
 pub async fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Complete(args) => run_complete(args).await,
+        Commands::Run(args) => crate::run::run_run(args).await,
     }
 }
 

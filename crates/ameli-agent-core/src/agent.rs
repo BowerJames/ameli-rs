@@ -819,6 +819,14 @@ pub struct ArcAgent {
     inner: Arc<Agent>,
 }
 
+impl Clone for ArcAgent {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
 impl ArcAgent {
     /// Create a new agent with the given options.
     pub fn new(options: AgentOptions) -> Self {

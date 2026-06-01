@@ -12,12 +12,22 @@ name = "ameli"
 path = "src/main.rs"
 
 [dependencies]
+
+# Workspace crates
 ameli-ai = { path = "../ameli-ai" }
+ameli-agent = { path = "../ameli-agent" }
+ameli-agent-core = { path = "../ameli-agent-core" }
 ameli-model-registry = { path = "../ameli-model-registry" }
 
 # External crates inherited from the root workspace
 serde_json = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
+serde = { workspace = true }
+tokio-util = { workspace = true }
 
+# External crates
 clap = { version = "4", features = ["derive"] }
+ratatui = "0.30"
+crossterm = "0.29"
+libloading = "0.8"
