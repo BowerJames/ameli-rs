@@ -1058,23 +1058,39 @@ impl ArcAgent {
                 let context = agent.create_context_snapshot().await;
                 let config = build_loop_config(&agent, skip_initial_steering_poll).await;
 
-                let agent_for_emit = agent.clone();
-                let emit: crate::agent_loop::AgentEventSink = Arc::new(move |event: AgentEvent| {
-                    let agent = agent_for_emit.clone();
-                    tokio::spawn(async move {
-                        agent.process_event(event).await;
+                let (event_tx, mut event_rx) =
+                    tokio::sync::mpsc::unbounded_channel::<AgentEvent>();
+                let emit: crate::agent_loop::AgentEventSink =
+                    Arc::new(move |event: AgentEvent| {
+                        let _ = event_tx.send(event);
                     });
+
+                // Spawn a single consumer task that processes events in
+                // FIFO order. This guarantees ordered state reduction and
+                // ordered subscriber dispatch.
+                let agent_for_process = agent.clone();
+                let event_processor = tokio::spawn(async move {
+                    while let Some(event) = event_rx.recv().await {
+                        agent_for_process.process_event(event).await;
+                    }
                 });
 
                 run_agent_loop(
                     messages,
                     context,
                     config,
-                    emit,
+                    emit.clone(),
                     Some(cancel),
                     agent.api_registry.clone(),
                 )
                 .await;
+
+                // The agent loop has finished. Drop the last sender
+                // reference so the channel closes, then await the
+                // processor so all queued events are processed before
+                // the lifecycle completes.
+                drop(emit);
+                let _ = event_processor.await;
             }
         })
         .await;
@@ -1087,22 +1103,31 @@ impl ArcAgent {
                 let context = agent.create_context_snapshot().await;
                 let config = build_loop_config(&agent, false).await;
 
-                let agent_for_emit = agent.clone();
-                let emit: crate::agent_loop::AgentEventSink = Arc::new(move |event: AgentEvent| {
-                    let agent = agent_for_emit.clone();
-                    tokio::spawn(async move {
-                        agent.process_event(event).await;
+                let (event_tx, mut event_rx) =
+                    tokio::sync::mpsc::unbounded_channel::<AgentEvent>();
+                let emit: crate::agent_loop::AgentEventSink =
+                    Arc::new(move |event: AgentEvent| {
+                        let _ = event_tx.send(event);
                     });
+
+                let agent_for_process = agent.clone();
+                let event_processor = tokio::spawn(async move {
+                    while let Some(event) = event_rx.recv().await {
+                        agent_for_process.process_event(event).await;
+                    }
                 });
 
                 run_agent_loop_continue(
                     context,
                     config,
-                    emit,
+                    emit.clone(),
                     Some(cancel),
                     agent.api_registry.clone(),
                 )
                 .await?;
+
+                drop(emit);
+                let _ = event_processor.await;
                 Ok(())
             }
         })

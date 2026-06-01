@@ -495,11 +495,26 @@ fn render_chat(frame: &mut Frame, area: Rect, state: &TuiState) {
         .block(Block::default().borders(Borders::NONE))
         .wrap(Wrap { trim: false });
 
-    // Auto-scroll: use a large scroll offset to always show the bottom of
-    // the log. ratatui clamps scroll to the maximum valid value, so this
-    // effectively means "scroll to bottom". This avoids needing to compute
-    // exact rendered line heights (ratatui 0.30's `line_count` is unstable).
-    let scroll = u16::MAX;
+    // Auto-scroll to show the bottom of the chat log.
+    //
+    // ratatui does NOT clamp scroll offsets — if scroll.y exceeds the
+    // number of wrapped lines, the widget skips all lines and renders
+    // nothing. We must compute a valid scroll value ourselves.
+    //
+    // We estimate the total number of wrapped lines by summing each
+    // entry's character count divided by the area width. This is an
+    // approximation (it doesn't account for word-wrap splitting or ANSI
+    // sequences) but is safe because overestimating produces a scroll
+    // that is clamped by saturating_sub to 0, showing the top of the
+    // log — which is always correct.
+    let total_lines: u16 = state
+        .entries
+        .iter()
+        .map(|e| estimate_entry_lines(e, area.width))
+        .sum();
+    // +1 for the trailing empty breathing-room line
+    let total_with_padding = total_lines.saturating_add(1);
+    let scroll = total_with_padding.saturating_sub(area.height);
 
     frame.render_widget(paragraph.scroll((scroll, 0)), area);
 }
@@ -567,6 +582,57 @@ fn extract_tool_result_text(content: &[ameli_ai::types::MediaContentBlock]) -> S
         })
         .collect::<Vec<_>>()
         .join("")
+}
+
+/// Estimate the number of wrapped lines an entry will occupy at a given width.
+///
+/// Returns at least 1 (every entry produces at least one rendered line).
+/// The estimate uses Unicode width–aware character counting and accounts for
+/// the label prefixes added during rendering.
+fn estimate_entry_lines(entry: &ChatEntry, width: u16) -> u16 {
+    if width == 0 {
+        return 1;
+    }
+    let text = match entry {
+        ChatEntry::User { text } => format!("You: {text}"),
+        ChatEntry::Assistant { text } => {
+            if text.is_empty() {
+                return 1; // "Assistant: " label only
+            }
+            format!("Assistant: {text}")
+        }
+        ChatEntry::Thinking { text } => format!("[thinking] {text}"),
+        ChatEntry::ToolStart {
+            name,
+            args_summary,
+        } => format!("\u{2699} {name}: {args_summary}"),
+        ChatEntry::ToolEnd { name, .. } => format!("  \u{2713} {name}"),
+        ChatEntry::Error { message } => format!("Error: {message}"),
+        ChatEntry::Info { message } => message.clone(),
+    };
+    wrap_line_count(&text, width)
+}
+
+/// Estimate how many terminal lines `text` occupies when wrapped at `width`.
+///
+/// Uses `unicode-width` for accurate display-width measurement.
+fn wrap_line_count(text: &str, width: u16) -> u16 {
+    if width == 0 {
+        return 1;
+    }
+    let width = width as usize;
+    let mut lines = 1u16;
+    let mut col = 0usize;
+    for ch in text.chars() {
+        let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if col + cw > width {
+            lines = lines.saturating_add(1);
+            col = cw;
+        } else {
+            col += cw;
+        }
+    }
+    lines
 }
 
 /// Truncate a string to `max_len` characters with "…" appended.

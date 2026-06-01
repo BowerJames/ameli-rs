@@ -29,3 +29,4 @@ clap = { version = "4", features = ["derive"] }
 ratatui = "0.30"
 crossterm = "0.29"
 libloading = "0.8"
+unicode-width = "0.2"
