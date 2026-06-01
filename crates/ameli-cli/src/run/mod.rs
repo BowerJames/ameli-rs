@@ -26,7 +26,7 @@ pub async fn run_run(args: RunArgs) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     // 2. Parse thinking level
-    let thinking_level = parse_thinking_level(&args.thinking);
+    let thinking_level = parse_thinking_level(&args.thinking)?;
 
     // 3. Auth storage — store API key if provided
     let auth_storage = Arc::new(InMemoryAuthStorage::new());
@@ -71,15 +71,19 @@ pub async fn run_run(args: RunArgs) -> Result<()> {
 
 /// Parse a thinking level string into a [`ThinkingLevel`].
 ///
-/// Falls back to [`ThinkingLevel::Off`] for unrecognized values.
-fn parse_thinking_level(s: &str) -> ThinkingLevel {
+/// Returns an error for unrecognized values so the user gets immediate
+/// feedback about typos (e.g. `--thinking meduim`).
+fn parse_thinking_level(s: &str) -> Result<ThinkingLevel> {
     match s.to_lowercase().as_str() {
-        "minimal" => ThinkingLevel::Minimal,
-        "low" => ThinkingLevel::Low,
-        "medium" => ThinkingLevel::Medium,
-        "high" => ThinkingLevel::High,
-        "xhigh" => ThinkingLevel::XHigh,
-        _ => ThinkingLevel::Off,
+        "off" => Ok(ThinkingLevel::Off),
+        "minimal" => Ok(ThinkingLevel::Minimal),
+        "low" => Ok(ThinkingLevel::Low),
+        "medium" => Ok(ThinkingLevel::Medium),
+        "high" => Ok(ThinkingLevel::High),
+        "xhigh" => Ok(ThinkingLevel::XHigh),
+        other => anyhow::bail!(
+            "unknown thinking level: {other:?}. Valid values: off, minimal, low, medium, high, xhigh"
+        ),
     }
 }
 
@@ -93,23 +97,35 @@ mod tests {
 
     #[test]
     fn parse_thinking_level_known_values() {
-        assert_eq!(parse_thinking_level("off"), ThinkingLevel::Off);
-        assert_eq!(parse_thinking_level("minimal"), ThinkingLevel::Minimal);
-        assert_eq!(parse_thinking_level("low"), ThinkingLevel::Low);
-        assert_eq!(parse_thinking_level("medium"), ThinkingLevel::Medium);
-        assert_eq!(parse_thinking_level("high"), ThinkingLevel::High);
-        assert_eq!(parse_thinking_level("xhigh"), ThinkingLevel::XHigh);
+        assert_eq!(parse_thinking_level("off").unwrap(), ThinkingLevel::Off);
+        assert_eq!(
+            parse_thinking_level("minimal").unwrap(),
+            ThinkingLevel::Minimal
+        );
+        assert_eq!(parse_thinking_level("low").unwrap(), ThinkingLevel::Low);
+        assert_eq!(
+            parse_thinking_level("medium").unwrap(),
+            ThinkingLevel::Medium
+        );
+        assert_eq!(parse_thinking_level("high").unwrap(), ThinkingLevel::High);
+        assert_eq!(parse_thinking_level("xhigh").unwrap(), ThinkingLevel::XHigh);
     }
 
     #[test]
     fn parse_thinking_level_case_insensitive() {
-        assert_eq!(parse_thinking_level("Medium"), ThinkingLevel::Medium);
-        assert_eq!(parse_thinking_level("HIGH"), ThinkingLevel::High);
+        assert_eq!(
+            parse_thinking_level("Medium").unwrap(),
+            ThinkingLevel::Medium
+        );
+        assert_eq!(parse_thinking_level("HIGH").unwrap(), ThinkingLevel::High);
     }
 
     #[test]
-    fn parse_thinking_level_unknown_falls_back_to_off() {
-        assert_eq!(parse_thinking_level("unknown"), ThinkingLevel::Off);
-        assert_eq!(parse_thinking_level(""), ThinkingLevel::Off);
+    fn parse_thinking_level_unknown_returns_error() {
+        let err = parse_thinking_level("unknown").unwrap_err();
+        assert!(err.to_string().contains("unknown thinking level"));
+
+        let err = parse_thinking_level("").unwrap_err();
+        assert!(err.to_string().contains("unknown thinking level"));
     }
 }

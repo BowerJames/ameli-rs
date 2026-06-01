@@ -88,10 +88,8 @@ dependencies = [
  "crossterm",
  "libloading",
  "ratatui",
- "serde",
  "serde_json",
  "tokio",
- "tokio-util",
 ]
 
 [[package]]

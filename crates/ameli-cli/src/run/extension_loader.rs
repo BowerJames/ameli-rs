@@ -64,10 +64,14 @@ pub struct ExtensionSet {
 /// Returns an error if any library cannot be loaded, the entry point symbol
 /// is missing, or the entry point returns null.
 pub fn load_extension_set(paths: &[String]) -> Result<ExtensionSet> {
-    let mut extensions: Vec<Box<dyn Extension>> = Vec::with_capacity(paths.len());
-    let mut libraries: Vec<Library> = Vec::with_capacity(paths.len());
+    let mut extensions: Vec<Box<dyn Extension>> = Vec::new();
+    let mut libraries: Vec<Library> = Vec::new();
 
     for path in paths {
+        let path = path.trim();
+        if path.is_empty() {
+            bail!("extension path must not be empty");
+        }
         let (ext, lib) = load_one(path)?;
         extensions.push(ext);
         libraries.push(lib);

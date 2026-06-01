@@ -22,8 +22,29 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
+use std::io::Write;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+
+// ---------------------------------------------------------------------------
+// TerminalGuard — ensures terminal is restored even on panic/error
+// ---------------------------------------------------------------------------
+
+/// RAII guard that restores the terminal to its original state on drop.
+///
+/// Created after entering raw mode and alternate screen. If the TUI loop
+/// panics or returns early, the `Drop` impl ensures the user's terminal
+/// is not left in a broken state.
+struct TerminalGuard;
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = terminal::disable_raw_mode();
+        let mut stdout = std::io::stdout();
+        let _ = crossterm::execute!(stdout, LeaveAlternateScreen);
+        let _ = stdout.flush();
+    }
+}
 
 // ---------------------------------------------------------------------------
 // ChatEntry — one row in the chat log
@@ -85,6 +106,9 @@ pub async fn run(session: Arc<AgentSession<InMemoryMetadata>>) -> Result<()> {
     crossterm::execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = ratatui::Terminal::new(backend)?;
+
+    // Guard ensures terminal is restored even on panic/error
+    let _guard = TerminalGuard;
 
     // 2. Create channels
     let (agent_tx, mut agent_rx) = mpsc::unbounded_channel::<AgentEvent>();
@@ -149,10 +173,7 @@ pub async fn run(session: Arc<AgentSession<InMemoryMetadata>>) -> Result<()> {
     crossterm_handle.abort();
     session.shutdown().await;
 
-    // Restore terminal
-    terminal::disable_raw_mode()?;
-    crossterm::execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-
+    // Terminal is restored by _guard Drop
     Ok(())
 }
 
@@ -312,11 +333,19 @@ fn handle_key(key: KeyEvent, state: &mut TuiState, session: &Arc<AgentSession<In
         }
         KeyCode::Esc => {
             state.should_quit = true;
+            let agent = session.agent().clone();
+            tokio::spawn(async move {
+                agent.abort().await;
+            });
         }
         _ => {
             // Handle Ctrl+C
             if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
                 state.should_quit = true;
+                let agent = session.agent().clone();
+                tokio::spawn(async move {
+                    agent.abort().await;
+                });
             }
         }
     }
@@ -441,11 +470,11 @@ fn render_chat(frame: &mut Frame, area: Rect, state: &TuiState) {
         .block(Block::default().borders(Borders::NONE))
         .wrap(Wrap { trim: false });
 
-    // Auto-scroll: render the paragraph with a scroll offset that keeps
-    // content visible at the bottom. We estimate content height from
-    // entries (each entry is at least 1 line).
-    let estimated_content_lines = state.entries.len() as u16 + 1; // +1 for trailing blank
-    let scroll = estimated_content_lines.saturating_sub(area.height);
+    // Auto-scroll: use a large scroll offset to always show the bottom of
+    // the log. ratatui clamps scroll to the maximum valid value, so this
+    // effectively means "scroll to bottom". This avoids needing to compute
+    // exact rendered line heights (ratatui 0.30's `line_count` is unstable).
+    let scroll = u16::MAX;
 
     frame.render_widget(paragraph.scroll((scroll, 0)), area);
 }

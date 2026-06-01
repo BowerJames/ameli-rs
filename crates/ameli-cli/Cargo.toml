@@ -23,8 +23,6 @@ ameli-model-registry = { path = "../ameli-model-registry" }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
-serde = { workspace = true }
-tokio-util = { workspace = true }
 
 # External crates
 clap = { version = "4", features = ["derive"] }
