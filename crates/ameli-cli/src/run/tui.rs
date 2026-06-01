@@ -304,6 +304,17 @@ fn handle_key(
     session: &Arc<AgentSession<InMemoryMetadata>>,
     error_tx: &mpsc::UnboundedSender<String>,
 ) {
+    // Handle Ctrl+C before the key.code match, because Ctrl+C produces
+    // KeyCode::Char('c') which would otherwise append 'c' to the input.
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+        state.should_quit = true;
+        let agent = session.agent().clone();
+        tokio::spawn(async move {
+            agent.abort().await;
+        });
+        return;
+    }
+
     match key.code {
         KeyCode::Char(c) => {
             state.input.push(c);
@@ -361,16 +372,7 @@ fn handle_key(
                 agent.abort().await;
             });
         }
-        _ => {
-            // Handle Ctrl+C
-            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-                state.should_quit = true;
-                let agent = session.agent().clone();
-                tokio::spawn(async move {
-                    agent.abort().await;
-                });
-            }
-        }
+        _ => {}
     }
 }
 
