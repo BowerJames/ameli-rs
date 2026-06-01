@@ -82,6 +82,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ameli-extension-factory"
+version = "0.1.0"
+dependencies = [
+ "ameli-agent",
+ "anyhow",
+ "jsonschema",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "ameli-model-registry"
 version = "0.1.0"
 dependencies = [

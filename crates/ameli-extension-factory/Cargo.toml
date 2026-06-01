@@ -1,0 +1,19 @@
+[lints]
+workspace = true
+
+[package]
+name = "ameli-extension-factory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+
+# Workspace crates
+ameli-agent = { path = "../ameli-agent" }
+
+# External crates inherited from the root workspace
+anyhow = { workspace = true }
+jsonschema = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
