@@ -85,7 +85,11 @@ pub struct AgentSessionResources<M: SessionMetadata> {
     /// API key resolution for the model's provider.
     pub auth_storage: Arc<dyn AuthStorage>,
     /// Extension instances to register with the agent.
-    pub extensions: Vec<Arc<dyn Extension>>,
+    ///
+    /// Uses `Box<dyn Extension>` to match [`CreateAgentSessionOptions::extensions`],
+    /// so consumers can pass this field directly to
+    /// [`create_agent_session()`](ameli_agent::create_agent_session).
+    pub extensions: Vec<Box<dyn Extension>>,
     /// Model selection for the session.
     pub model: ModelRef,
     /// Reasoning/thinking level for the session.
@@ -149,7 +153,10 @@ impl<M: SessionMetadata> fmt::Debug for AgentSessionResources<M> {
 ///
 ///     fn load_resources(&self, session_id: &str) -> AsyncResult<AgentSessionResources<M>, ameli_multi_agent_resource_loader::LoadResourcesError> {
 ///         // Load resources for the session
-///         todo!()
+///         let session_id = session_id.to_string();
+///         Box::pin(async move {
+///             Err(ameli_multi_agent_resource_loader::LoadResourcesError::session_not_found(&session_id))
+///         })
 ///     }
 /// }
 /// ```
@@ -287,7 +294,7 @@ mod tests {
                     Ok(AgentSessionResources {
                         session_manager: Arc::new(InMemorySessionManager::new()),
                         auth_storage: Arc::new(InMemoryAuthStorage::new()),
-                        extensions: vec![Arc::new(NoOpExtension)],
+                        extensions: vec![Box::new(NoOpExtension)],
                         model: ModelRef {
                             provider: "openai".into(),
                             model_id: "gpt-4o".into(),
