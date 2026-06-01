@@ -4,6 +4,7 @@ use anyhow::Result;
 use clap::Parser;
 
 mod cli;
+mod run;
 
 #[tokio::main]
 async fn main() -> Result<()> {
