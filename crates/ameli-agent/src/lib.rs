@@ -65,8 +65,7 @@ pub use extension::{
     AsyncResult, BeforeAgentStartEvent, BeforeAgentStartMessage, BeforeAgentStartResult,
     CommandContext, Extension, ExtensionActionError, ExtensionActions, ExtensionApi,
     ExtensionContext, ExtensionError, ExtensionEvent, ExtensionRunner, MessageDelivery,
-    MessageEndEvent, MessageEndResult, RegisteredCommand, SessionShutdownEvent,
-    SessionShutdownReason, SessionStartEvent, SessionStartReason, ToolExecutionUpdateEvent,
-    ToolInfo,
+    MessageEndEvent, MessageEndResult, SessionShutdownEvent, SessionShutdownReason,
+    SessionStartEvent, SessionStartReason, ToolExecutionUpdateEvent, ToolInfo,
 };
 pub use interface::{CustomNotifyMessage, Interface, NoopInterface, NotifyKind, NotifyMessage};

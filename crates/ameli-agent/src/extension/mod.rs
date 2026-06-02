@@ -62,8 +62,8 @@ pub use events::{
     BeforeAgentStartResult, CommandContext, ContextEvent, ContextResult, ExtensionEvent,
     FormatBranchSummaryEvent, FormatBranchSummaryResult, FormatCompactionSummaryEvent,
     FormatCompactionSummaryResult, MessageEndEvent, MessageEndResult, MessageStartEvent,
-    MessageUpdateEvent, RegisteredCommand, SessionShutdownEvent, SessionShutdownReason,
-    SessionStartEvent, SessionStartReason, ToolCallEvent, ToolCallResult, ToolExecutionEndEvent,
+    MessageUpdateEvent, SessionShutdownEvent, SessionShutdownReason, SessionStartEvent,
+    SessionStartReason, ToolCallEvent, ToolCallResult, ToolExecutionEndEvent,
     ToolExecutionStartEvent, ToolExecutionUpdateEvent, ToolResultEvent, ToolResultPatch,
     TurnEndEvent, TurnStartEvent,
 };

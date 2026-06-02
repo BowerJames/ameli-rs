@@ -78,6 +78,9 @@ pub enum ExtensionActionError {
     /// A storage operation failed.
     #[error("{0}")]
     StorageError(String),
+    /// The action backend has not been fully initialized yet.
+    #[error("action backend not initialized")]
+    NotInitialized,
 }
 
 // ---------------------------------------------------------------------------
@@ -147,6 +150,11 @@ pub trait ExtensionActions: Send + Sync {
     fn has_pending_messages(&self) -> AsyncResult<bool, ExtensionActionError>;
 
     /// Abort the current agent operation.
+    ///
+    /// This is fire-and-forget: the abort request is spawned as a detached
+    /// tokio task and there is no way to confirm whether the abort succeeded.
+    /// This is intentional — abort should be non-blocking and immediately
+    /// return control to the caller.
     fn abort(&self);
 
     /// Whether the agent is currently idle (not streaming).
@@ -265,6 +273,9 @@ mod tests {
 
         let err = ExtensionActionError::StorageError("disk full".into());
         assert_eq!(format!("{err}"), "disk full");
+
+        let err = ExtensionActionError::NotInitialized;
+        assert_eq!(format!("{err}"), "action backend not initialized");
     }
 
     #[test]

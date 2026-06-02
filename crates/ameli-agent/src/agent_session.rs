@@ -493,7 +493,15 @@ struct SessionActions<M: SessionMetadata> {
     session_manager: Arc<dyn SessionManager<M>>,
     /// Auth storage for future set_model() key validation.
     _auth_storage: Arc<dyn AuthStorage>,
-    /// Runner reference for tool queries. Populated after runner creation.
+    /// Runner reference for tool queries.
+    ///
+    /// **Initialization contract:** This is `None` during steps 4–6 of
+    /// `create_agent_session` and is only set to `Some(runner)` at step 7.
+    /// Methods that read the runner (e.g. `get_all_tools`, `set_active_tools`,
+    /// `send_message` with `NextTurn`) will return empty/error results until
+    /// the runner is wired. This is safe because extensions are initialized
+    /// at step 5 and their `init` handlers run synchronously within
+    /// `create_agent_session` — no extension code can observe a `None` runner.
     runner: std::sync::RwLock<Option<Arc<ExtensionRunner>>>,
 }
 
@@ -519,14 +527,13 @@ impl<M: SessionMetadata> ExtensionActions for SessionActions<M> {
                 })
             }
             MessageDelivery::NextTurn => {
-                // We can't access the API from here directly. Instead, store
-                // in a local next_turn queue that AgentSession drains.
-                // For now, use the agent's API via the runner.
                 let runner_guard = self.runner.read().unwrap_or_else(|e| e.into_inner());
                 if let Some(runner) = runner_guard.as_ref() {
                     runner.api().queue_next_turn_message(msg);
+                    Box::pin(async { Ok(()) })
+                } else {
+                    Box::pin(async { Err(ExtensionActionError::NotInitialized) })
                 }
-                Box::pin(async { Ok(()) })
             }
         }
     }
