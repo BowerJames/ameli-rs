@@ -83,6 +83,7 @@ pub enum Transport {
 pub enum InputType {
     Text,
     Image,
+    Audio,
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +142,16 @@ pub struct ImageContent {
     pub mime_type: String,
 }
 
+/// Base64-encoded audio content.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioContent {
+    /// Base64-encoded audio data.
+    pub data: String,
+    /// MIME type (e.g., `"audio/wav"`, `"audio/mpeg"`).
+    pub mime_type: String,
+}
+
 /// A tool call requested by the assistant.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -166,12 +177,13 @@ pub enum AssistantContentBlock {
     ToolCall(ToolCall),
 }
 
-/// Content blocks shared by user messages and tool results (text + image).
+/// Content blocks shared by user messages and tool results (text, image, and audio).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum MediaContentBlock {
     Text(TextContent),
     Image(ImageContent),
+    Audio(AudioContent),
 }
 
 /// Content of a user message: either a plain string or structured blocks.
@@ -180,7 +192,7 @@ pub enum MediaContentBlock {
 pub enum UserContent {
     /// A plain text string.
     Text(String),
-    /// Structured content blocks (text and/or images).
+    /// Structured content blocks (text, images, and/or audio).
     Blocks(Vec<MediaContentBlock>),
 }
 
