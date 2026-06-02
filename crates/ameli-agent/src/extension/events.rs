@@ -32,7 +32,9 @@
 //! | `format_branch_summary` | First-to-return | Yes (on first `Some`) |
 
 use ameli_agent_core::types::AgentMessage;
-use ameli_ai::types::{AssistantMessageEvent, ImageContent, MediaContentBlock, ToolResultMessage};
+use ameli_ai::types::{
+    AssistantMessageEvent, AudioContent, ImageContent, MediaContentBlock, ToolResultMessage,
+};
 use serde_json::Value;
 use std::fmt;
 use std::future::Future;
@@ -288,6 +290,8 @@ pub struct BeforeAgentStartEvent {
     pub prompt: String,
     /// Images attached to the user prompt, if any.
     pub images: Vec<ImageContent>,
+    /// Audio attachments included with the user prompt, if any.
+    pub audio: Vec<AudioContent>,
     /// The fully assembled system prompt string.
     pub system_prompt: String,
 }
@@ -550,6 +554,7 @@ mod tests {
             ExtensionEvent::BeforeAgentStart(BeforeAgentStartEvent {
                 prompt: "hello".into(),
                 images: vec![],
+                audio: vec![],
                 system_prompt: String::new(),
             })
             .to_string(),

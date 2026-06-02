@@ -41,7 +41,8 @@ pub fn build_request_params(
     }
 
     let supports_images = model.input.contains(&InputType::Image);
-    let converted = convert_messages(context, model, supports_images);
+    let supports_audio = model.input.contains(&InputType::Audio);
+    let converted = convert_messages(context, model, supports_images, supports_audio);
     messages.extend(converted);
     map.insert("messages".into(), json!(messages));
 
@@ -106,13 +107,22 @@ pub fn build_request_params(
 // ---------------------------------------------------------------------------
 
 /// Convert ameli [`Context`] messages into OpenAI message params.
-fn convert_messages(context: &Context, model: &Model, supports_images: bool) -> Vec<Value> {
+fn convert_messages(
+    context: &Context,
+    model: &Model,
+    supports_images: bool,
+    supports_audio: bool,
+) -> Vec<Value> {
     let mut params: Vec<Value> = Vec::new();
 
     for msg in &context.messages {
         match msg {
             Message::User(user_msg) => {
-                params.push(convert_user_message(user_msg, supports_images));
+                params.push(convert_user_message(
+                    user_msg,
+                    supports_images,
+                    supports_audio,
+                ));
             }
             Message::Assistant(assistant_msg) => {
                 // Skip error/aborted messages (incomplete turns)
@@ -135,7 +145,11 @@ fn convert_messages(context: &Context, model: &Model, supports_images: bool) -> 
 }
 
 /// Convert a user message.
-fn convert_user_message(msg: &crate::types::UserMessage, supports_images: bool) -> Value {
+fn convert_user_message(
+    msg: &crate::types::UserMessage,
+    supports_images: bool,
+    supports_audio: bool,
+) -> Value {
     match &msg.content {
         UserContent::Text(text) => json!({
             "role": "user",
@@ -161,6 +175,23 @@ fn convert_user_message(msg: &crate::types::UserMessage, supports_images: bool) 
                             json!({
                                 "type": "text",
                                 "text": "(image omitted: model does not support images)",
+                            })
+                        }
+                    }
+                    MediaContentBlock::Audio(audio) => {
+                        if supports_audio {
+                            let format = mime_type_to_audio_format(&audio.mime_type);
+                            json!({
+                                "type": "input_audio",
+                                "input_audio": {
+                                    "data": audio.data,
+                                    "format": format,
+                                },
+                            })
+                        } else {
+                            json!({
+                                "type": "text",
+                                "text": "(audio omitted: model does not support audio)",
                             })
                         }
                     }
@@ -374,6 +405,24 @@ fn thinking_level_name(level: &crate::types::ThinkingLevel) -> String {
     .to_string()
 }
 
+/// Convert an audio MIME type to the OpenAI `input_audio.format` value.
+///
+/// OpenAI accepts: `"wav"`, `"mp3"`, `"aiff"`, `"aac"`, `"ogg"`,
+/// `"flac"`.
+///
+/// Falls back to `"wav"` for unrecognized MIME types.
+fn mime_type_to_audio_format(mime: &str) -> &'static str {
+    match mime {
+        "audio/wav" | "audio/x-wav" => "wav",
+        "audio/mpeg" | "audio/mp3" => "mp3",
+        "audio/aiff" | "audio/x-aiff" => "aiff",
+        "audio/aac" => "aac",
+        "audio/ogg" | "audio/opus" => "ogg",
+        "audio/flac" | "audio/x-flac" => "flac",
+        _ => "wav",
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -564,7 +613,7 @@ mod tests {
             messages: vec![Message::User(crate::types::UserMessage::text("hello"))],
             ..Default::default()
         };
-        let params = convert_messages(&context, &model, true);
+        let params = convert_messages(&context, &model, true, false);
         assert_eq!(params[0]["role"], "user");
         assert_eq!(params[0]["content"], "hello");
     }
@@ -622,7 +671,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        let params = convert_messages(&context, &model, true);
+        let params = convert_messages(&context, &model, true, false);
         // Only the user message should remain
         assert_eq!(params.len(), 1);
         assert_eq!(params[0]["role"], "user");
@@ -684,5 +733,64 @@ mod tests {
         let params = build_request_params(&model, &context, &options, &compat_max_tokens);
         assert_eq!(params["max_tokens"], 4096);
         assert!(params.get("max_completion_tokens").is_none());
+    }
+
+    #[test]
+    fn convert_audio_in_user_message() {
+        let model = Model {
+            input: vec![InputType::Text, InputType::Audio],
+            ..test_model()
+        };
+        let user_msg = crate::types::UserMessage {
+            content: crate::types::UserContent::Blocks(vec![
+                MediaContentBlock::Text(TextContent::new("describe this")),
+                MediaContentBlock::Audio(crate::types::AudioContent {
+                    data: "dGVzdA==".into(),
+                    mime_type: "audio/wav".into(),
+                }),
+            ]),
+            timestamp: 1000,
+        };
+        let result = convert_user_message(&user_msg, false, true);
+        let content = result["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[1]["type"], "input_audio");
+        assert_eq!(content[1]["input_audio"]["format"], "wav");
+        assert_eq!(content[1]["input_audio"]["data"], "dGVzdA==");
+    }
+
+    #[test]
+    fn convert_audio_omitted_when_unsupported() {
+        let model = test_model(); // only Text input
+        let user_msg = crate::types::UserMessage {
+            content: crate::types::UserContent::Blocks(vec![MediaContentBlock::Audio(
+                crate::types::AudioContent {
+                    data: "dGVzdA==".into(),
+                    mime_type: "audio/mp3".into(),
+                },
+            )]),
+            timestamp: 1000,
+        };
+        let result = convert_user_message(&user_msg, false, false);
+        let content = result["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(
+            content[0]["text"],
+            "(audio omitted: model does not support audio)"
+        );
+    }
+
+    #[test]
+    fn mime_type_to_audio_format_mappings() {
+        assert_eq!(mime_type_to_audio_format("audio/wav"), "wav");
+        assert_eq!(mime_type_to_audio_format("audio/x-wav"), "wav");
+        assert_eq!(mime_type_to_audio_format("audio/mpeg"), "mp3");
+        assert_eq!(mime_type_to_audio_format("audio/mp3"), "mp3");
+        assert_eq!(mime_type_to_audio_format("audio/aiff"), "aiff");
+        assert_eq!(mime_type_to_audio_format("audio/aac"), "aac");
+        assert_eq!(mime_type_to_audio_format("audio/ogg"), "ogg");
+        assert_eq!(mime_type_to_audio_format("audio/flac"), "flac");
+        assert_eq!(mime_type_to_audio_format("audio/unknown"), "wav");
     }
 }

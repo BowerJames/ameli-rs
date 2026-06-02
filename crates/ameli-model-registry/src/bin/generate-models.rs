@@ -169,6 +169,14 @@ async fn main() {
             {
                 input.push(InputType::Image);
             }
+            if dev_model
+                .modalities
+                .as_ref()
+                .and_then(|m| m.input.as_ref())
+                .is_some_and(|inputs| inputs.iter().any(|i| i == "audio"))
+            {
+                input.push(InputType::Audio);
+            }
 
             // Build cost
             let cost = Cost {

@@ -207,10 +207,11 @@ struct AgentInner {
 
 /// Input accepted by [`ArcAgent::prompt`].
 pub enum PromptInput {
-    /// A plain text string, optionally with images.
+    /// A plain text string, optionally with images and audio.
     Text {
         text: String,
         images: Vec<ameli_ai::types::ImageContent>,
+        audio: Vec<ameli_ai::types::AudioContent>,
     },
     /// One or more pre-built agent messages.
     Messages(Vec<AgentMessage>),
@@ -221,6 +222,7 @@ impl From<String> for PromptInput {
         Self::Text {
             text,
             images: Vec::new(),
+            audio: Vec::new(),
         }
     }
 }
@@ -230,6 +232,7 @@ impl From<&str> for PromptInput {
         Self::Text {
             text: text.into(),
             images: Vec::new(),
+            audio: Vec::new(),
         }
     }
 }
@@ -675,11 +678,18 @@ impl Agent {
     fn normalize_prompt_input(input: PromptInput) -> Vec<AgentMessage> {
         match input {
             PromptInput::Messages(msgs) => msgs,
-            PromptInput::Text { text, images } => {
+            PromptInput::Text {
+                text,
+                images,
+                audio,
+            } => {
                 let mut content: Vec<MediaContentBlock> =
                     vec![MediaContentBlock::Text(TextContent::new(text))];
                 for img in images {
                     content.push(MediaContentBlock::Image(img));
+                }
+                for aud in audio {
+                    content.push(MediaContentBlock::Audio(aud));
                 }
                 let user_msg = ameli_ai::types::UserMessage {
                     content: ameli_ai::types::UserContent::Blocks(content),
@@ -1058,12 +1068,10 @@ impl ArcAgent {
                 let context = agent.create_context_snapshot().await;
                 let config = build_loop_config(&agent, skip_initial_steering_poll).await;
 
-                let (event_tx, mut event_rx) =
-                    tokio::sync::mpsc::unbounded_channel::<AgentEvent>();
-                let emit: crate::agent_loop::AgentEventSink =
-                    Arc::new(move |event: AgentEvent| {
-                        let _ = event_tx.send(event);
-                    });
+                let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<AgentEvent>();
+                let emit: crate::agent_loop::AgentEventSink = Arc::new(move |event: AgentEvent| {
+                    let _ = event_tx.send(event);
+                });
 
                 // Spawn a single consumer task that processes events in
                 // FIFO order. This guarantees ordered state reduction and
@@ -1103,12 +1111,10 @@ impl ArcAgent {
                 let context = agent.create_context_snapshot().await;
                 let config = build_loop_config(&agent, false).await;
 
-                let (event_tx, mut event_rx) =
-                    tokio::sync::mpsc::unbounded_channel::<AgentEvent>();
-                let emit: crate::agent_loop::AgentEventSink =
-                    Arc::new(move |event: AgentEvent| {
-                        let _ = event_tx.send(event);
-                    });
+                let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<AgentEvent>();
+                let emit: crate::agent_loop::AgentEventSink = Arc::new(move |event: AgentEvent| {
+                    let _ = event_tx.send(event);
+                });
 
                 let agent_for_process = agent.clone();
                 let event_processor = tokio::spawn(async move {
@@ -1300,9 +1306,14 @@ mod tests {
     fn prompt_input_from_str() {
         let input: PromptInput = "hello".into();
         match input {
-            PromptInput::Text { text, images } => {
+            PromptInput::Text {
+                text,
+                images,
+                audio,
+            } => {
                 assert_eq!(text, "hello");
                 assert!(images.is_empty());
+                assert!(audio.is_empty());
             }
             _ => panic!("expected Text variant"),
         }

@@ -257,7 +257,7 @@ impl From<Message> for AgentMessage {
 /// The `content` is what gets sent back to the model.
 #[derive(Debug, Clone)]
 pub struct AgentToolResult<T = serde_json::Value> {
-    /// Text or image content returned to the model.
+    /// Text, image, or audio content returned to the model.
     pub content: Vec<MediaContentBlock>,
     /// Arbitrary structured details for logs or UI rendering.
     pub details: T,

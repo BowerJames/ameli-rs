@@ -327,6 +327,7 @@ impl ExtensionRunner {
         &self,
         prompt: &str,
         images: &[ameli_ai::types::ImageContent],
+        audio: &[ameli_ai::types::AudioContent],
         system_prompt: &str,
         cancel: CancellationToken,
     ) -> Option<BeforeAgentStartAccumulated> {
@@ -343,6 +344,7 @@ impl ExtensionRunner {
             let event = BeforeAgentStartEvent {
                 prompt: prompt.to_string(),
                 images: images.to_vec(),
+                audio: audio.to_vec(),
                 system_prompt: current_system_prompt.clone(),
             };
             if let Some(result) = (handler.handler)(event, ctx.clone()).await {
@@ -1514,7 +1516,13 @@ mod tests {
         let runner = ExtensionRunner::from_extensions(&extensions);
 
         let result = runner
-            .emit_before_agent_start("hello", &[], "original prompt", CancellationToken::new())
+            .emit_before_agent_start(
+                "hello",
+                &[],
+                &[],
+                "original prompt",
+                CancellationToken::new(),
+            )
             .await;
 
         assert!(result.is_some());
@@ -1526,7 +1534,7 @@ mod tests {
     async fn emit_before_agent_start_none_when_no_handlers() {
         let runner = ExtensionRunner::from_extensions(&[]);
         let result = runner
-            .emit_before_agent_start("hello", &[], "prompt", CancellationToken::new())
+            .emit_before_agent_start("hello", &[], &[], "prompt", CancellationToken::new())
             .await;
         assert!(result.is_none());
     }

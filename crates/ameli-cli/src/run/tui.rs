@@ -359,7 +359,7 @@ fn handle_key(
                 let session = session.clone();
                 let error_tx = error_tx.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = session.prompt(&text, vec![]).await {
+                    if let Err(e) = session.prompt(&text, vec![], vec![]).await {
                         let _ = error_tx.send(format!("Prompt failed: {e}"));
                     }
                 });
@@ -602,10 +602,7 @@ fn estimate_entry_lines(entry: &ChatEntry, width: u16) -> u16 {
             format!("Assistant: {text}")
         }
         ChatEntry::Thinking { text } => format!("[thinking] {text}"),
-        ChatEntry::ToolStart {
-            name,
-            args_summary,
-        } => format!("\u{2699} {name}: {args_summary}"),
+        ChatEntry::ToolStart { name, args_summary } => format!("\u{2699} {name}: {args_summary}"),
         ChatEntry::ToolEnd { name, .. } => format!("  \u{2713} {name}"),
         ChatEntry::Error { message } => format!("Error: {message}"),
         ChatEntry::Info { message } => message.clone(),

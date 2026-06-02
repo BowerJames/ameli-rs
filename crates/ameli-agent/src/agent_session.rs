@@ -59,7 +59,7 @@ use ameli_agent_core::types::{
     AgentEvent, AgentMessage, AgentState, CustomAgentMessage, ThinkingLevel,
 };
 use ameli_agent_core::{AgentOptions, ArcAgent, Subscription};
-use ameli_ai::types::{ImageContent, MediaContentBlock, TextContent};
+use ameli_ai::types::{AudioContent, ImageContent, MediaContentBlock, TextContent};
 use ameli_model_registry::ModelRegistry;
 use std::collections::HashSet;
 use std::fmt;
@@ -269,6 +269,7 @@ impl<M: SessionMetadata> AgentSession<M> {
         &self,
         text: impl Into<String>,
         images: Vec<ImageContent>,
+        audio: Vec<AudioContent>,
     ) -> anyhow::Result<()> {
         let text = text.into();
 
@@ -276,7 +277,13 @@ impl<M: SessionMetadata> AgentSession<M> {
         let system_prompt = self.get_current_system_prompt().await;
         let accumulated = self
             .runner
-            .emit_before_agent_start(&text, &images, &system_prompt, CancellationToken::new())
+            .emit_before_agent_start(
+                &text,
+                &images,
+                &audio,
+                &system_prompt,
+                CancellationToken::new(),
+            )
             .await;
 
         // Apply system prompt override if any, otherwise reset to base.
@@ -304,13 +311,16 @@ impl<M: SessionMetadata> AgentSession<M> {
         }
 
         // Build user message.
-        let user_msg = if images.is_empty() {
+        let user_msg = if images.is_empty() && audio.is_empty() {
             ameli_ai::types::UserMessage::text(&text)
         } else {
             let mut content: Vec<MediaContentBlock> =
                 vec![MediaContentBlock::Text(TextContent::new(&text))];
             for img in images {
                 content.push(MediaContentBlock::Image(img));
+            }
+            for aud in audio {
+                content.push(MediaContentBlock::Audio(aud));
             }
             ameli_ai::types::UserMessage {
                 content: ameli_ai::types::UserContent::Blocks(content),
