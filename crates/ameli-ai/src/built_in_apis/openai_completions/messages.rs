@@ -180,14 +180,20 @@ fn convert_user_message(
                     }
                     MediaContentBlock::Audio(audio) => {
                         if supports_audio {
-                            let format = mime_type_to_audio_format(&audio.mime_type);
-                            json!({
-                                "type": "input_audio",
-                                "input_audio": {
-                                    "data": audio.data,
-                                    "format": format,
-                                },
-                            })
+                            if let Some(format) = mime_type_to_audio_format(&audio.mime_type) {
+                                json!({
+                                    "type": "input_audio",
+                                    "input_audio": {
+                                        "data": audio.data,
+                                        "format": format,
+                                    },
+                                })
+                            } else {
+                                json!({
+                                    "type": "text",
+                                    "text": format!("(audio omitted: unsupported audio format {})", audio.mime_type),
+                                })
+                            }
                         } else {
                             json!({
                                 "type": "text",
@@ -410,16 +416,16 @@ fn thinking_level_name(level: &crate::types::ThinkingLevel) -> String {
 /// OpenAI accepts: `"wav"`, `"mp3"`, `"aiff"`, `"aac"`, `"ogg"`,
 /// `"flac"`.
 ///
-/// Falls back to `"wav"` for unrecognized MIME types.
-fn mime_type_to_audio_format(mime: &str) -> &'static str {
+/// Returns `None` for unrecognized MIME types.
+fn mime_type_to_audio_format(mime: &str) -> Option<&'static str> {
     match mime {
-        "audio/wav" | "audio/x-wav" => "wav",
-        "audio/mpeg" | "audio/mp3" => "mp3",
-        "audio/aiff" | "audio/x-aiff" => "aiff",
-        "audio/aac" => "aac",
-        "audio/ogg" | "audio/opus" => "ogg",
-        "audio/flac" | "audio/x-flac" => "flac",
-        _ => "wav",
+        "audio/wav" | "audio/x-wav" => Some("wav"),
+        "audio/mpeg" | "audio/mp3" => Some("mp3"),
+        "audio/aiff" | "audio/x-aiff" => Some("aiff"),
+        "audio/aac" => Some("aac"),
+        "audio/ogg" | "audio/opus" => Some("ogg"),
+        "audio/flac" | "audio/x-flac" => Some("flac"),
+        _ => None,
     }
 }
 
@@ -737,10 +743,6 @@ mod tests {
 
     #[test]
     fn convert_audio_in_user_message() {
-        let model = Model {
-            input: vec![InputType::Text, InputType::Audio],
-            ..test_model()
-        };
         let user_msg = crate::types::UserMessage {
             content: crate::types::UserContent::Blocks(vec![
                 MediaContentBlock::Text(TextContent::new("describe this")),
@@ -762,7 +764,6 @@ mod tests {
 
     #[test]
     fn convert_audio_omitted_when_unsupported() {
-        let model = test_model(); // only Text input
         let user_msg = crate::types::UserMessage {
             content: crate::types::UserContent::Blocks(vec![MediaContentBlock::Audio(
                 crate::types::AudioContent {
@@ -782,15 +783,35 @@ mod tests {
     }
 
     #[test]
+    fn convert_audio_with_unsupported_mime_type() {
+        let user_msg = crate::types::UserMessage {
+            content: crate::types::UserContent::Blocks(vec![MediaContentBlock::Audio(
+                crate::types::AudioContent {
+                    data: "dGVzdA==".into(),
+                    mime_type: "audio/xyz".into(),
+                },
+            )]),
+            timestamp: 1000,
+        };
+        let result = convert_user_message(&user_msg, false, true);
+        let content = result["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(
+            content[0]["text"],
+            "(audio omitted: unsupported audio format audio/xyz)"
+        );
+    }
+
+    #[test]
     fn mime_type_to_audio_format_mappings() {
-        assert_eq!(mime_type_to_audio_format("audio/wav"), "wav");
-        assert_eq!(mime_type_to_audio_format("audio/x-wav"), "wav");
-        assert_eq!(mime_type_to_audio_format("audio/mpeg"), "mp3");
-        assert_eq!(mime_type_to_audio_format("audio/mp3"), "mp3");
-        assert_eq!(mime_type_to_audio_format("audio/aiff"), "aiff");
-        assert_eq!(mime_type_to_audio_format("audio/aac"), "aac");
-        assert_eq!(mime_type_to_audio_format("audio/ogg"), "ogg");
-        assert_eq!(mime_type_to_audio_format("audio/flac"), "flac");
-        assert_eq!(mime_type_to_audio_format("audio/unknown"), "wav");
+        assert_eq!(mime_type_to_audio_format("audio/wav"), Some("wav"));
+        assert_eq!(mime_type_to_audio_format("audio/x-wav"), Some("wav"));
+        assert_eq!(mime_type_to_audio_format("audio/mpeg"), Some("mp3"));
+        assert_eq!(mime_type_to_audio_format("audio/mp3"), Some("mp3"));
+        assert_eq!(mime_type_to_audio_format("audio/aiff"), Some("aiff"));
+        assert_eq!(mime_type_to_audio_format("audio/aac"), Some("aac"));
+        assert_eq!(mime_type_to_audio_format("audio/ogg"), Some("ogg"));
+        assert_eq!(mime_type_to_audio_format("audio/flac"), Some("flac"));
+        assert_eq!(mime_type_to_audio_format("audio/unknown"), None);
     }
 }
