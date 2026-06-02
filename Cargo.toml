@@ -4,6 +4,11 @@ members = [
     "crates/*",
 ]
 
+# Local test extensions — not part of the published workspace
+exclude = [
+    "examples/*",
+]
+
 # Ensures feature flags are resolved independently per crate, preventing feature-leaking
 resolver = "2"
 
