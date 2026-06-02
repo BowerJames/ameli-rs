@@ -214,6 +214,9 @@ impl ExtensionRunner {
     /// corresponding event type. This avoids unnecessary overhead.
     ///
     /// Call this **before** constructing the [`ArcAgent`].
+    ///
+    /// **Note:** For post-construction hook installation, prefer [`build_hooks()`]
+    /// which returns an [`ExtensionHooks`] struct directly.
     pub fn install_hooks(self: &Arc<Self>, options: &mut ameli_agent_core::AgentOptions) {
         if self.has_tool_call_handlers() {
             let runner = self.clone();
@@ -241,6 +244,44 @@ impl ExtensionRunner {
                 Box::pin(async move { runner.handle_transform_context(&messages, cancel).await })
             }));
         }
+    }
+
+    /// Build extension hooks directly into an [`ExtensionHooks`] struct.
+    ///
+    /// This is the preferred method for post-construction hook installation
+    /// via [`ArcAgent::install_extension_hooks()`]. Unlike [`install_hooks()`],
+    /// it does not require a temporary [`AgentOptions`].
+    pub fn build_hooks(self: &Arc<Self>) -> ameli_agent_core::ExtensionHooks {
+        let mut hooks = ameli_agent_core::ExtensionHooks::default();
+
+        if self.has_tool_call_handlers() {
+            let runner = self.clone();
+            hooks.before_tool_call = Some(Arc::new(move |ctx, cancel| {
+                let runner = runner.clone();
+                let ctx = ctx.clone();
+                Box::pin(async move { runner.handle_before_tool_call(&ctx, cancel).await })
+            }));
+        }
+
+        if self.has_tool_result_handlers() {
+            let runner = self.clone();
+            hooks.after_tool_call = Some(Arc::new(move |ctx, cancel| {
+                let runner = runner.clone();
+                let ctx = ctx.clone();
+                Box::pin(async move { runner.handle_after_tool_call(&ctx, cancel).await })
+            }));
+        }
+
+        if self.has_context_handlers() {
+            let runner = self.clone();
+            hooks.transform_context = Some(Arc::new(move |messages, cancel| {
+                let runner = runner.clone();
+                let messages = messages.to_vec();
+                Box::pin(async move { runner.handle_transform_context(&messages, cancel).await })
+            }));
+        }
+
+        hooks
     }
 
     // -----------------------------------------------------------------------

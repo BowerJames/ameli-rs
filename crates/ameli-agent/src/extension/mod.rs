@@ -233,7 +233,7 @@ pub struct ExtensionHandlers {
 
 impl ExtensionHandlers {
     /// Returns `true` if no handlers of any kind have been registered.
-    fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.agent_start_handlers.is_empty()
             && self.agent_end_handlers.is_empty()
             && self.turn_start_handlers.is_empty()

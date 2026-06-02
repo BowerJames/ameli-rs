@@ -491,8 +491,6 @@ fn thinking_level_to_str(level: ThinkingLevel) -> &'static str {
 struct SessionActions<M: SessionMetadata> {
     agent: ArcAgent,
     session_manager: Arc<dyn SessionManager<M>>,
-    /// Auth storage for future set_model() key validation.
-    _auth_storage: Arc<dyn AuthStorage>,
     /// Runner reference for tool queries.
     ///
     /// **Initialization contract:** This is `None` during steps 4–6 of
@@ -918,7 +916,6 @@ pub async fn create_agent_session<M: SessionMetadata>(
     let session_actions = Arc::new(SessionActions {
         agent: agent.clone(),
         session_manager: options.session_manager.clone(),
-        _auth_storage: options.auth_storage.clone(),
         runner: std::sync::RwLock::new(None),
     });
     let actions: Arc<dyn ExtensionActions> = session_actions.clone();
@@ -941,13 +938,7 @@ pub async fn create_agent_session<M: SessionMetadata>(
     // 8. Install hooks and set tools on the agent.
     let tools = runner.get_registered_tools();
     {
-        let mut hooks = ameli_agent_core::ExtensionHooks::default();
-        // Re-use the runner's install_hooks logic by using a temporary AgentOptions
-        let mut temp_opts = AgentOptions::default();
-        runner.install_hooks(&mut temp_opts);
-        hooks.before_tool_call = temp_opts.before_tool_call;
-        hooks.after_tool_call = temp_opts.after_tool_call;
-        hooks.transform_context = temp_opts.transform_context;
+        let hooks = runner.build_hooks();
         agent.install_extension_hooks(hooks);
     }
     agent.set_tools(tools).await;
