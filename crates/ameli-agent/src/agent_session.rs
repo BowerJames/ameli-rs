@@ -276,6 +276,9 @@ impl<M: SessionMetadata> AgentSession<M> {
     ) -> anyhow::Result<()> {
         let text = text.into();
 
+        // Drain any NextTurn messages queued by extensions since the last prompt.
+        let next_turn_msgs = self.runner.api().drain_next_turn_messages();
+
         // Emit before_agent_start and collect results.
         let system_prompt = self.get_current_system_prompt().await;
         let accumulated = self
@@ -334,6 +337,9 @@ impl<M: SessionMetadata> AgentSession<M> {
             }
         };
         prompt_messages.push(AgentMessage::User(user_msg));
+
+        // Inject any NextTurn messages queued by extensions.
+        prompt_messages.extend(next_turn_msgs);
 
         self.agent.prompt(prompt_messages.into()).await
     }
@@ -550,12 +556,9 @@ impl<M: SessionMetadata> ExtensionActions for SessionActions<M> {
         })
     }
 
-    fn get_active_tools(&self) -> Vec<String> {
-        // Use tokio::task::block_in_place would be needed for the async version.
-        // For a synchronous method, we can't await. Use a snapshot approach.
-        // The agent state is behind a tokio Mutex, so we need a different approach.
-        // For now, return empty — this will be addressed with a proper async approach.
-        Vec::new()
+    fn get_active_tools(&self) -> AsyncResult<Vec<String>, ExtensionActionError> {
+        let agent = self.agent.clone();
+        Box::pin(async move { Ok(agent.get_tool_names().await) })
     }
 
     fn get_all_tools(&self) -> Vec<ToolInfo> {
@@ -578,57 +581,69 @@ impl<M: SessionMetadata> ExtensionActions for SessionActions<M> {
         }
     }
 
-    fn set_active_tools(&self, names: Vec<String>) {
+    fn set_active_tools(&self, names: Vec<String>) -> AsyncResult<(), ExtensionActionError> {
+        let agent = self.agent.clone();
         let runner_guard = self.runner.read().unwrap_or_else(|e| e.into_inner());
-        if let Some(runner) = runner_guard.as_ref() {
-            let all_tools = runner.get_registered_tools();
-            let filtered: Vec<_> = all_tools
-                .into_iter()
-                .filter(|t| names.iter().any(|n| n == &t.name() || n == t.label()))
-                .collect();
-            // Can't await here (sync method). Use try_lock pattern or
-            // accept that this needs to be async in the future.
-            // For now, store and apply on next access.
-            let _agent = self.agent.clone();
-            let _ = filtered; // suppress warning
-                              // TODO: make set_active_tools async-compatible
-        }
+        let filtered: Vec<_> = runner_guard
+            .as_ref()
+            .map(|runner| {
+                let all_tools = runner.get_registered_tools();
+                all_tools
+                    .into_iter()
+                    .filter(|t| names.iter().any(|n| n == &t.name() || n == t.label()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Box::pin(async move {
+            agent.set_tools(filtered).await;
+            Ok(())
+        })
     }
 
-    fn model(&self) -> Option<Model> {
-        // Can't await tokio mutex from sync context.
-        None
+    fn model(&self) -> AsyncResult<Option<Model>, ExtensionActionError> {
+        let agent = self.agent.clone();
+        Box::pin(async move { Ok(Some(agent.state().await.model)) })
     }
 
-    fn set_model(&self, _model: Model) -> AsyncResult<bool, ExtensionActionError> {
-        Box::pin(async { Ok(true) })
+    fn set_model(&self, model: Model) -> AsyncResult<bool, ExtensionActionError> {
+        let agent = self.agent.clone();
+        Box::pin(async move {
+            agent.set_model(model).await;
+            Ok(true)
+        })
     }
 
-    fn get_thinking_level(&self) -> ThinkingLevel {
-        ThinkingLevel::Off
+    fn get_thinking_level(&self) -> AsyncResult<ThinkingLevel, ExtensionActionError> {
+        let agent = self.agent.clone();
+        Box::pin(async move { Ok(agent.state().await.thinking_level) })
     }
 
-    fn set_thinking_level(&self, _level: ThinkingLevel) {
-        // No sync access to agent state
+    fn set_thinking_level(&self, level: ThinkingLevel) -> AsyncResult<(), ExtensionActionError> {
+        let agent = self.agent.clone();
+        Box::pin(async move {
+            agent.set_thinking_level(level).await;
+            Ok(())
+        })
     }
 
-    fn get_system_prompt(&self) -> String {
-        String::new()
+    fn get_system_prompt(&self) -> AsyncResult<String, ExtensionActionError> {
+        let agent = self.agent.clone();
+        Box::pin(async move { Ok(agent.state().await.system_prompt) })
     }
 
-    fn has_pending_messages(&self) -> bool {
-        false
+    fn has_pending_messages(&self) -> AsyncResult<bool, ExtensionActionError> {
+        let agent = self.agent.clone();
+        Box::pin(async move { Ok(agent.has_queued_messages().await) })
     }
 
     fn abort(&self) {
         let agent = self.agent.clone();
-        // abort is async on ArcAgent — can't await here.
-        // Fire and forget via tokio::spawn.
         tokio::spawn(async move { agent.abort().await });
     }
 
-    fn is_idle(&self) -> bool {
-        false
+    fn is_idle(&self) -> AsyncResult<bool, ExtensionActionError> {
+        let agent = self.agent.clone();
+        Box::pin(async move { Ok(!agent.is_active().await) })
     }
 }
 
@@ -786,10 +801,14 @@ impl<M: SessionMetadata> fmt::Debug for CreateAgentSessionResult<M> {
 ///
 /// 1. Resolves [`ModelRef`] → [`Model`] via the model registry
 /// 2. Validates that an API key is available for the model's provider
-/// 3. Initializes extensions and wires their hooks into the agent
-/// 4. Wires auth storage into the agent so API keys are resolved per-call
-/// 5. Restores session context (messages, thinking level) from storage
-/// 6. Persists initial model and thinking level for new sessions
+/// 3. Constructs `ArcAgent` (empty tools, no hooks)
+/// 4. Creates `SessionActions` (always-bound actions backend)
+/// 5. Initializes extensions with real actions
+/// 6. Creates `ExtensionRunner` from handlers + API
+/// 7. Wires `SessionActions` → runner
+/// 8. Installs extension hooks and sets tools on the agent
+/// 9. Constructs `AgentSession`
+/// 10. Restores session context from storage
 ///
 /// The returned session is idle and ready for
 /// [`prompt`](AgentSession::prompt) or [`continue_`](AgentSession::continue_).
@@ -911,7 +930,7 @@ pub async fn create_agent_session<M: SessionMetadata>(
     }
     agent.set_tools(tools).await;
 
-    // 7. Construct AgentSession.
+    // 9. Construct AgentSession.
     let session = AgentSession::new(AgentSessionConfig {
         agent,
         session_manager: options.session_manager.clone(),
@@ -920,7 +939,7 @@ pub async fn create_agent_session<M: SessionMetadata>(
     })
     .await;
 
-    // 8. Restore session context from storage (only if session has existing data).
+    // 10. Restore session context from storage (only if session has existing data).
     let session_ctx = options.session_manager.build_context().await?;
     let has_existing_session = !session_ctx.messages.is_empty();
 

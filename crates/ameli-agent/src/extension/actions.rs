@@ -120,37 +120,37 @@ pub trait ExtensionActions: Send + Sync {
     ) -> AsyncResult<(), ExtensionActionError>;
 
     /// Get the names of currently active tools.
-    fn get_active_tools(&self) -> Vec<String>;
+    fn get_active_tools(&self) -> AsyncResult<Vec<String>, ExtensionActionError>;
 
     /// Get metadata for all registered tools (active or not).
     fn get_all_tools(&self) -> Vec<ToolInfo>;
 
     /// Set which tools are active by name. Takes immediate effect.
-    fn set_active_tools(&self, names: Vec<String>);
+    fn set_active_tools(&self, names: Vec<String>) -> AsyncResult<(), ExtensionActionError>;
 
     /// Get the current model, if set.
-    fn model(&self) -> Option<Model>;
+    fn model(&self) -> AsyncResult<Option<Model>, ExtensionActionError>;
 
     /// Switch the model. Returns `Ok(false)` if no API key is available.
     fn set_model(&self, model: Model) -> AsyncResult<bool, ExtensionActionError>;
 
     /// Get the current thinking level.
-    fn get_thinking_level(&self) -> ThinkingLevel;
+    fn get_thinking_level(&self) -> AsyncResult<ThinkingLevel, ExtensionActionError>;
 
     /// Set the thinking level.
-    fn set_thinking_level(&self, level: ThinkingLevel);
+    fn set_thinking_level(&self, level: ThinkingLevel) -> AsyncResult<(), ExtensionActionError>;
 
     /// Get the current system prompt.
-    fn get_system_prompt(&self) -> String;
+    fn get_system_prompt(&self) -> AsyncResult<String, ExtensionActionError>;
 
     /// Whether there are queued messages waiting.
-    fn has_pending_messages(&self) -> bool;
+    fn has_pending_messages(&self) -> AsyncResult<bool, ExtensionActionError>;
 
     /// Abort the current agent operation.
     fn abort(&self);
 
     /// Whether the agent is currently idle (not streaming).
-    fn is_idle(&self) -> bool;
+    fn is_idle(&self) -> AsyncResult<bool, ExtensionActionError>;
 }
 
 /// No-op implementation of [`ExtensionActions`] for testing and defaults.
@@ -182,42 +182,46 @@ impl ExtensionActions for NoopExtensionActions {
         Box::pin(async { Ok(()) })
     }
 
-    fn get_active_tools(&self) -> Vec<String> {
-        Vec::new()
+    fn get_active_tools(&self) -> AsyncResult<Vec<String>, ExtensionActionError> {
+        Box::pin(async { Ok(Vec::new()) })
     }
 
     fn get_all_tools(&self) -> Vec<ToolInfo> {
         Vec::new()
     }
 
-    fn set_active_tools(&self, _names: Vec<String>) {}
+    fn set_active_tools(&self, _names: Vec<String>) -> AsyncResult<(), ExtensionActionError> {
+        Box::pin(async { Ok(()) })
+    }
 
-    fn model(&self) -> Option<Model> {
-        None
+    fn model(&self) -> AsyncResult<Option<Model>, ExtensionActionError> {
+        Box::pin(async { Ok(None) })
     }
 
     fn set_model(&self, _model: Model) -> AsyncResult<bool, ExtensionActionError> {
         Box::pin(async { Ok(true) })
     }
 
-    fn get_thinking_level(&self) -> ThinkingLevel {
-        ThinkingLevel::Off
+    fn get_thinking_level(&self) -> AsyncResult<ThinkingLevel, ExtensionActionError> {
+        Box::pin(async { Ok(ThinkingLevel::Off) })
     }
 
-    fn set_thinking_level(&self, _level: ThinkingLevel) {}
-
-    fn get_system_prompt(&self) -> String {
-        String::new()
+    fn set_thinking_level(&self, _level: ThinkingLevel) -> AsyncResult<(), ExtensionActionError> {
+        Box::pin(async { Ok(()) })
     }
 
-    fn has_pending_messages(&self) -> bool {
-        false
+    fn get_system_prompt(&self) -> AsyncResult<String, ExtensionActionError> {
+        Box::pin(async { Ok(String::new()) })
+    }
+
+    fn has_pending_messages(&self) -> AsyncResult<bool, ExtensionActionError> {
+        Box::pin(async { Ok(false) })
     }
 
     fn abort(&self) {}
 
-    fn is_idle(&self) -> bool {
-        true
+    fn is_idle(&self) -> AsyncResult<bool, ExtensionActionError> {
+        Box::pin(async { Ok(true) })
     }
 }
 

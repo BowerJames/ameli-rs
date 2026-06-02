@@ -633,7 +633,7 @@ impl ExtensionApi {
     }
 
     /// Get the names of currently active tools.
-    pub fn get_active_tools(&self) -> Vec<String> {
+    pub fn get_active_tools(&self) -> AsyncResult<Vec<String>, ExtensionActionError> {
         self.actions.get_active_tools()
     }
 
@@ -643,12 +643,12 @@ impl ExtensionApi {
     }
 
     /// Set which tools are active by name.
-    pub fn set_active_tools(&self, names: Vec<String>) {
-        self.actions.set_active_tools(names);
+    pub fn set_active_tools(&self, names: Vec<String>) -> AsyncResult<(), ExtensionActionError> {
+        self.actions.set_active_tools(names)
     }
 
     /// Get the current model.
-    pub fn model(&self) -> Option<Model> {
+    pub fn model(&self) -> AsyncResult<Option<Model>, ExtensionActionError> {
         self.actions.model()
     }
 
@@ -658,22 +658,25 @@ impl ExtensionApi {
     }
 
     /// Get the current thinking level.
-    pub fn get_thinking_level(&self) -> ThinkingLevel {
+    pub fn get_thinking_level(&self) -> AsyncResult<ThinkingLevel, ExtensionActionError> {
         self.actions.get_thinking_level()
     }
 
     /// Set the thinking level.
-    pub fn set_thinking_level(&self, level: ThinkingLevel) {
-        self.actions.set_thinking_level(level);
+    pub fn set_thinking_level(
+        &self,
+        level: ThinkingLevel,
+    ) -> AsyncResult<(), ExtensionActionError> {
+        self.actions.set_thinking_level(level)
     }
 
     /// Get the current system prompt.
-    pub fn get_system_prompt(&self) -> String {
+    pub fn get_system_prompt(&self) -> AsyncResult<String, ExtensionActionError> {
         self.actions.get_system_prompt()
     }
 
     /// Check if there are pending messages in the agent's queues.
-    pub fn has_pending_messages(&self) -> bool {
+    pub fn has_pending_messages(&self) -> AsyncResult<bool, ExtensionActionError> {
         self.actions.has_pending_messages()
     }
 
@@ -683,7 +686,7 @@ impl ExtensionApi {
     }
 
     /// Check if the agent is currently idle (no active run).
-    pub fn is_idle(&self) -> bool {
+    pub fn is_idle(&self) -> AsyncResult<bool, ExtensionActionError> {
         self.actions.is_idle()
     }
 
@@ -834,42 +837,49 @@ mod tests {
             Box::pin(async { Ok(()) })
         }
 
-        fn get_active_tools(&self) -> Vec<String> {
-            Vec::new()
+        fn get_active_tools(&self) -> AsyncResult<Vec<String>, ExtensionActionError> {
+            Box::pin(async { Ok(Vec::new()) })
         }
 
         fn get_all_tools(&self) -> Vec<ToolInfo> {
             Vec::new()
         }
 
-        fn set_active_tools(&self, _names: Vec<String>) {}
+        fn set_active_tools(&self, _names: Vec<String>) -> AsyncResult<(), ExtensionActionError> {
+            Box::pin(async { Ok(()) })
+        }
 
-        fn model(&self) -> Option<Model> {
-            None
+        fn model(&self) -> AsyncResult<Option<Model>, ExtensionActionError> {
+            Box::pin(async { Ok(None) })
         }
 
         fn set_model(&self, _model: Model) -> AsyncResult<bool, ExtensionActionError> {
             Box::pin(async { Ok(true) })
         }
 
-        fn get_thinking_level(&self) -> ThinkingLevel {
-            ThinkingLevel::Off
+        fn get_thinking_level(&self) -> AsyncResult<ThinkingLevel, ExtensionActionError> {
+            Box::pin(async { Ok(ThinkingLevel::Off) })
         }
 
-        fn set_thinking_level(&self, _level: ThinkingLevel) {}
-
-        fn get_system_prompt(&self) -> String {
-            String::new()
+        fn set_thinking_level(
+            &self,
+            _level: ThinkingLevel,
+        ) -> AsyncResult<(), ExtensionActionError> {
+            Box::pin(async { Ok(()) })
         }
 
-        fn has_pending_messages(&self) -> bool {
-            false
+        fn get_system_prompt(&self) -> AsyncResult<String, ExtensionActionError> {
+            Box::pin(async { Ok(String::new()) })
+        }
+
+        fn has_pending_messages(&self) -> AsyncResult<bool, ExtensionActionError> {
+            Box::pin(async { Ok(false) })
         }
 
         fn abort(&self) {}
 
-        fn is_idle(&self) -> bool {
-            true
+        fn is_idle(&self) -> AsyncResult<bool, ExtensionActionError> {
+            Box::pin(async { Ok(true) })
         }
     }
 
@@ -1018,18 +1028,18 @@ mod tests {
         assert_eq!(handlers.tools[0].handler.name(), "test_tool");
     }
 
-    #[test]
-    fn test_runtime_actions_delegate() {
+    #[tokio::test]
+    async fn test_runtime_actions_delegate() {
         let api = test_api();
 
         // These should not panic — they delegate to TestActions (no-ops)
-        assert!(api.get_active_tools().is_empty());
+        assert!(api.get_active_tools().await.unwrap().is_empty());
         assert!(api.get_all_tools().is_empty());
-        assert!(api.model().is_none());
-        assert_eq!(api.get_thinking_level(), ThinkingLevel::Off);
-        assert!(api.get_system_prompt().is_empty());
-        assert!(!api.has_pending_messages());
-        assert!(api.is_idle());
+        assert!(api.model().await.unwrap().is_none());
+        assert_eq!(api.get_thinking_level().await.unwrap(), ThinkingLevel::Off);
+        assert!(api.get_system_prompt().await.unwrap().is_empty());
+        assert!(!api.has_pending_messages().await.unwrap());
+        assert!(api.is_idle().await.unwrap());
     }
 
     #[test]

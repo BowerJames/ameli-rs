@@ -65,7 +65,7 @@ impl ExtensionContext {
     // -------------------------------------------------------------------
 
     /// Get the current model.
-    pub fn model(&self) -> Option<Model> {
+    pub fn model(&self) -> AsyncResult<Option<Model>, ExtensionActionError> {
         self.api.model()
     }
 
@@ -98,7 +98,7 @@ impl ExtensionContext {
     }
 
     /// Get the names of currently active tools.
-    pub fn get_active_tools(&self) -> Vec<String> {
+    pub fn get_active_tools(&self) -> AsyncResult<Vec<String>, ExtensionActionError> {
         self.api.get_active_tools()
     }
 
@@ -108,8 +108,8 @@ impl ExtensionContext {
     }
 
     /// Dynamically change which tools are active.
-    pub fn set_active_tools(&self, names: Vec<String>) {
-        self.api.set_active_tools(names);
+    pub fn set_active_tools(&self, names: Vec<String>) -> AsyncResult<(), ExtensionActionError> {
+        self.api.set_active_tools(names)
     }
 
     /// Switch the model at runtime.
@@ -118,22 +118,27 @@ impl ExtensionContext {
     }
 
     /// Get the current thinking level.
-    pub fn get_thinking_level(&self) -> ameli_agent_core::types::ThinkingLevel {
+    pub fn get_thinking_level(
+        &self,
+    ) -> AsyncResult<ameli_agent_core::types::ThinkingLevel, ExtensionActionError> {
         self.api.get_thinking_level()
     }
 
     /// Set the thinking level.
-    pub fn set_thinking_level(&self, level: ameli_agent_core::types::ThinkingLevel) {
-        self.api.set_thinking_level(level);
+    pub fn set_thinking_level(
+        &self,
+        level: ameli_agent_core::types::ThinkingLevel,
+    ) -> AsyncResult<(), ExtensionActionError> {
+        self.api.set_thinking_level(level)
     }
 
     /// Get the current system prompt.
-    pub fn get_system_prompt(&self) -> String {
+    pub fn get_system_prompt(&self) -> AsyncResult<String, ExtensionActionError> {
         self.api.get_system_prompt()
     }
 
     /// Whether there are queued messages waiting.
-    pub fn has_pending_messages(&self) -> bool {
+    pub fn has_pending_messages(&self) -> AsyncResult<bool, ExtensionActionError> {
         self.api.has_pending_messages()
     }
 
@@ -143,7 +148,7 @@ impl ExtensionContext {
     }
 
     /// Whether the agent is currently idle.
-    pub fn is_idle(&self) -> bool {
+    pub fn is_idle(&self) -> AsyncResult<bool, ExtensionActionError> {
         self.api.is_idle()
     }
 }
@@ -175,19 +180,22 @@ mod tests {
     use super::*;
     use ameli_agent_core::types::ThinkingLevel;
 
-    #[test]
-    fn for_testing_defaults() {
+    #[tokio::test]
+    async fn for_testing_defaults() {
         let ctx = ExtensionContext::for_testing();
         assert!(ctx.cancel_token.is_none());
-        assert!(ctx.is_idle());
-        assert!(!ctx.has_pending_messages());
+        assert!(ctx.is_idle().await.unwrap());
+        assert!(!ctx.has_pending_messages().await.unwrap());
     }
 
-    #[test]
-    fn clone_copies_fields() {
+    #[tokio::test]
+    async fn clone_copies_fields() {
         let ctx = ExtensionContext::for_testing();
         let cloned = ctx.clone();
-        assert_eq!(cloned.is_idle(), ctx.is_idle());
+        assert_eq!(
+            ctx.is_idle().await.unwrap(),
+            cloned.is_idle().await.unwrap()
+        );
         // Both share the same Arc
         assert!(Arc::ptr_eq(&ctx.api, &cloned.api));
     }
@@ -200,13 +208,13 @@ mod tests {
         assert!(debug.contains("<ExtensionApi>"));
     }
 
-    #[test]
-    fn convenience_methods_delegate() {
+    #[tokio::test]
+    async fn convenience_methods_delegate() {
         let ctx = ExtensionContext::for_testing();
-        assert!(ctx.model().is_none());
-        assert!(ctx.get_active_tools().is_empty());
+        assert!(ctx.model().await.unwrap().is_none());
+        assert!(ctx.get_active_tools().await.unwrap().is_empty());
         assert!(ctx.get_all_tools().is_empty());
-        assert_eq!(ctx.get_thinking_level(), ThinkingLevel::Off);
-        assert!(ctx.get_system_prompt().is_empty());
+        assert_eq!(ctx.get_thinking_level().await.unwrap(), ThinkingLevel::Off);
+        assert!(ctx.get_system_prompt().await.unwrap().is_empty());
     }
 }
