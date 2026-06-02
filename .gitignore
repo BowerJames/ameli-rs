@@ -21,5 +21,8 @@ Thumbs.db
 # References for other Repos
 reference/
 
+# Example extensions (local testing only)
+examples/
+
 # Docs
 docs/
