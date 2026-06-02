@@ -196,9 +196,6 @@ impl ExtensionRunner {
 
     /// Collect command names registered by extensions.
     pub fn get_registered_command_names(&self) -> Vec<String> {
-        // Commands are stored by name, but the handler type differs from
-        // RegisteredCommand.handler. For now, return just the names.
-        // TODO: unify command handler types.
         self.handlers
             .commands
             .iter()

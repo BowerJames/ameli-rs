@@ -541,10 +541,25 @@ impl<M: SessionMetadata> ExtensionActions for SessionActions<M> {
     fn send_user_message(
         &self,
         text: String,
-        _images: Vec<ImageContent>,
+        images: Vec<ImageContent>,
         delivery: MessageDelivery,
     ) -> AsyncResult<(), ExtensionActionError> {
-        let user_msg = AgentMessage::User(ameli_ai::types::UserMessage::text(&text));
+        let user_msg = if images.is_empty() {
+            AgentMessage::User(ameli_ai::types::UserMessage::text(&text))
+        } else {
+            let mut content: Vec<MediaContentBlock> =
+                vec![MediaContentBlock::Text(TextContent::new(&text))];
+            for img in images {
+                content.push(MediaContentBlock::Image(img));
+            }
+            AgentMessage::User(ameli_ai::types::UserMessage {
+                content: ameli_ai::types::UserContent::Blocks(content),
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64,
+            })
+        };
         self.send_message(user_msg, delivery)
     }
 

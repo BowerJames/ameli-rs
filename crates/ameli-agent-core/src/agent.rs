@@ -604,6 +604,9 @@ impl Agent {
     /// Install extension hooks after construction.
     ///
     /// Must only be called when the agent is idle, before the first run.
+    /// Calling this during an active run may result in partially-written
+    /// hooks being visible to concurrent agent loop reads (e.g.,
+    /// `before_tool_call` updated but `after_tool_call` not yet).
     pub fn install_extension_hooks(&self, hooks: ExtensionHooks) {
         if let Some(hook) = hooks.before_tool_call {
             *self
@@ -1036,6 +1039,8 @@ impl ArcAgent {
     /// Install extension hooks after construction.
     ///
     /// Must only be called when the agent is idle, before the first run.
+    /// Calling this during an active run may result in partially-written
+    /// hooks being visible to concurrent agent loop reads.
     pub fn install_extension_hooks(&self, hooks: ExtensionHooks) {
         self.inner.install_extension_hooks(hooks)
     }
