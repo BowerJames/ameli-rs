@@ -272,6 +272,7 @@ pub fn build_default(
 mod tests {
     use super::*;
     use ameli_agent::extension::ExtensionApi;
+    use std::sync::Arc;
 
     // -- Test fixtures -------------------------------------------------------
 
@@ -305,7 +306,7 @@ mod tests {
         fn name(&self) -> &str {
             "noop"
         }
-        fn init(&self, _api: &mut ExtensionApi) {}
+        fn init(&self, _api: Arc<ExtensionApi>) {}
     }
 
     /// A template that requires a "message" field.

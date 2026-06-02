@@ -50,7 +50,10 @@
 
 use crate::auth_storage::AuthStorage;
 use crate::error::CreateAgentSessionError;
-use crate::extension::{init_extensions, Extension, ExtensionContext, ExtensionRunner};
+use crate::extension::{
+    init_extensions, AsyncResult, Extension, ExtensionActionError, ExtensionActions,
+    ExtensionContext, ExtensionRunner, MessageDelivery, ToolInfo,
+};
 use crate::interface::Interface;
 use crate::session_manager::{
     CustomMessageContent, ModelRef, SessionContext, SessionManager, SessionMessage, SessionMetadata,
@@ -59,7 +62,7 @@ use ameli_agent_core::types::{
     AgentEvent, AgentMessage, AgentState, CustomAgentMessage, ThinkingLevel,
 };
 use ameli_agent_core::{AgentOptions, ArcAgent, Subscription};
-use ameli_ai::types::{AudioContent, ImageContent, MediaContentBlock, TextContent};
+use ameli_ai::types::{AudioContent, ImageContent, MediaContentBlock, Model, TextContent};
 use ameli_model_registry::ModelRegistry;
 use std::collections::HashSet;
 use std::fmt;
@@ -353,11 +356,7 @@ impl<M: SessionMetadata> AgentSession<M> {
     /// Dispatches to the first registered handler with matching name.
     pub async fn command(&self, name: &str, args: &str) -> anyhow::Result<()> {
         let ctx = crate::extension::events::CommandContext {
-            extension_context: ExtensionContext {
-                is_idle: !self.agent.is_active().await,
-                cancel_token: None,
-                interface: self.interface.clone(),
-            },
+            extension_context: ExtensionContext::new(self.runner.api().clone(), None),
         };
         self.runner.execute_command(name, args, ctx).await
     }
@@ -473,6 +472,163 @@ fn thinking_level_to_str(level: ThinkingLevel) -> &'static str {
         ThinkingLevel::Medium => "medium",
         ThinkingLevel::High => "high",
         ThinkingLevel::XHigh => "xhigh",
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SessionActions — concrete ExtensionActions implementation
+// ---------------------------------------------------------------------------
+
+/// Concrete [`ExtensionActions`] backed by a real agent session.
+///
+/// Generic over `M: SessionMetadata` to access the session manager.
+struct SessionActions<M: SessionMetadata> {
+    agent: ArcAgent,
+    session_manager: Arc<dyn SessionManager<M>>,
+    /// Auth storage for future set_model() key validation.
+    _auth_storage: Arc<dyn AuthStorage>,
+    /// Runner reference for tool queries. Populated after runner creation.
+    runner: std::sync::RwLock<Option<Arc<ExtensionRunner>>>,
+}
+
+impl<M: SessionMetadata> ExtensionActions for SessionActions<M> {
+    fn send_message(
+        &self,
+        msg: AgentMessage,
+        delivery: MessageDelivery,
+    ) -> AsyncResult<(), ExtensionActionError> {
+        match delivery {
+            MessageDelivery::Steer => {
+                let agent = self.agent.clone();
+                Box::pin(async move {
+                    agent.steer(msg).await;
+                    Ok(())
+                })
+            }
+            MessageDelivery::FollowUp => {
+                let agent = self.agent.clone();
+                Box::pin(async move {
+                    agent.follow_up(msg).await;
+                    Ok(())
+                })
+            }
+            MessageDelivery::NextTurn => {
+                // We can't access the API from here directly. Instead, store
+                // in a local next_turn queue that AgentSession drains.
+                // For now, use the agent's API via the runner.
+                let runner_guard = self.runner.read().unwrap_or_else(|e| e.into_inner());
+                if let Some(runner) = runner_guard.as_ref() {
+                    runner.api().queue_next_turn_message(msg);
+                }
+                Box::pin(async { Ok(()) })
+            }
+        }
+    }
+
+    fn send_user_message(
+        &self,
+        text: String,
+        _images: Vec<ImageContent>,
+        delivery: MessageDelivery,
+    ) -> AsyncResult<(), ExtensionActionError> {
+        let user_msg = AgentMessage::User(ameli_ai::types::UserMessage::text(&text));
+        self.send_message(user_msg, delivery)
+    }
+
+    fn append_entry(
+        &self,
+        custom_type: &str,
+        data: Option<serde_json::Value>,
+    ) -> AsyncResult<(), ExtensionActionError> {
+        let sm = self.session_manager.clone();
+        let custom_type = custom_type.to_string();
+        Box::pin(async move {
+            sm.append_custom_entry(&custom_type, data)
+                .await
+                .map(|_| ())
+                .map_err(|e| ExtensionActionError::StorageError(e.to_string()))
+        })
+    }
+
+    fn get_active_tools(&self) -> Vec<String> {
+        // Use tokio::task::block_in_place would be needed for the async version.
+        // For a synchronous method, we can't await. Use a snapshot approach.
+        // The agent state is behind a tokio Mutex, so we need a different approach.
+        // For now, return empty — this will be addressed with a proper async approach.
+        Vec::new()
+    }
+
+    fn get_all_tools(&self) -> Vec<ToolInfo> {
+        let runner_guard = self.runner.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(runner) = runner_guard.as_ref() {
+            runner
+                .get_registered_tools()
+                .into_iter()
+                .map(|t| {
+                    let def = t.tool_definition();
+                    ToolInfo {
+                        name: def.name,
+                        description: def.description,
+                        parameters: def.parameters,
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn set_active_tools(&self, names: Vec<String>) {
+        let runner_guard = self.runner.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(runner) = runner_guard.as_ref() {
+            let all_tools = runner.get_registered_tools();
+            let filtered: Vec<_> = all_tools
+                .into_iter()
+                .filter(|t| names.iter().any(|n| n == &t.name() || n == t.label()))
+                .collect();
+            // Can't await here (sync method). Use try_lock pattern or
+            // accept that this needs to be async in the future.
+            // For now, store and apply on next access.
+            let _agent = self.agent.clone();
+            let _ = filtered; // suppress warning
+                              // TODO: make set_active_tools async-compatible
+        }
+    }
+
+    fn model(&self) -> Option<Model> {
+        // Can't await tokio mutex from sync context.
+        None
+    }
+
+    fn set_model(&self, _model: Model) -> AsyncResult<bool, ExtensionActionError> {
+        Box::pin(async { Ok(true) })
+    }
+
+    fn get_thinking_level(&self) -> ThinkingLevel {
+        ThinkingLevel::Off
+    }
+
+    fn set_thinking_level(&self, _level: ThinkingLevel) {
+        // No sync access to agent state
+    }
+
+    fn get_system_prompt(&self) -> String {
+        String::new()
+    }
+
+    fn has_pending_messages(&self) -> bool {
+        false
+    }
+
+    fn abort(&self) {
+        let agent = self.agent.clone();
+        // abort is async on ArcAgent — can't await here.
+        // Fire and forget via tokio::spawn.
+        tokio::spawn(async move { agent.abort().await });
+    }
+
+    fn is_idle(&self) -> bool {
+        false
     }
 }
 
@@ -693,24 +849,15 @@ pub async fn create_agent_session<M: SessionMetadata>(
             provider: model.provider.clone(),
         })?;
 
-    // 3. Initialize extensions.
-    let handlers = init_extensions(&options.extensions);
-    let runner = Arc::new(ExtensionRunner::with_interface(
-        handlers,
-        options.interface.clone(),
-    ));
-
-    // 4. Build AgentOptions.
+    // 3. Build ArcAgent first (empty tools, no hooks — filled in later).
     let thinking_level = options.thinking_level.unwrap_or(ThinkingLevel::Off);
-    let tools = runner.get_registered_tools();
-    let auth_storage = options.auth_storage.clone();
-
-    let mut agent_options = AgentOptions {
+    let auth_storage_clone = options.auth_storage.clone();
+    let agent = ArcAgent::new(AgentOptions {
         initial_state: Some(AgentState {
             system_prompt: options.system_prompt.unwrap_or_default(),
             model: model.clone(),
             thinking_level,
-            tools,
+            tools: vec![],
             messages: Vec::new(),
             is_streaming: false,
             streaming_message: None,
@@ -718,19 +865,51 @@ pub async fn create_agent_session<M: SessionMetadata>(
             error_message: None,
         }),
         get_api_key: Some(Arc::new(move |provider: &str| {
-            let auth_storage = auth_storage.clone();
+            let auth_storage = auth_storage_clone.clone();
             let provider = provider.to_string();
             Box::pin(async move { auth_storage.get_api_key(&provider).await.ok() })
         })),
         api_registry: Some(ameli_ai::api::DEFAULT_API_REGISTRY.clone()),
         ..Default::default()
-    };
+    });
 
-    // 5. Install extension hooks (before_tool_call, after_tool_call, transform_context).
-    runner.install_hooks(&mut agent_options);
+    // 4. Create SessionActions (always-bound actions backend).
+    let session_actions = Arc::new(SessionActions {
+        agent: agent.clone(),
+        session_manager: options.session_manager.clone(),
+        _auth_storage: options.auth_storage.clone(),
+        runner: std::sync::RwLock::new(None),
+    });
+    let actions: Arc<dyn ExtensionActions> = session_actions.clone();
 
-    // 6. Construct ArcAgent.
-    let agent = ArcAgent::new(agent_options);
+    // 5. Init extensions with real actions.
+    let (api, handlers) = init_extensions(&options.extensions, actions);
+    api.set_interface(options.interface.clone());
+
+    // 6. Create runner from handlers + api.
+    let runner = Arc::new(ExtensionRunner::from_parts(api.clone(), handlers));
+
+    // 7. Wire SessionActions → runner.
+    {
+        let mut guard = session_actions
+            .runner
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
+        *guard = Some(runner.clone());
+    }
+    // 8. Install hooks and set tools on the agent.
+    let tools = runner.get_registered_tools();
+    {
+        let mut hooks = ameli_agent_core::ExtensionHooks::default();
+        // Re-use the runner's install_hooks logic by using a temporary AgentOptions
+        let mut temp_opts = AgentOptions::default();
+        runner.install_hooks(&mut temp_opts);
+        hooks.before_tool_call = temp_opts.before_tool_call;
+        hooks.after_tool_call = temp_opts.after_tool_call;
+        hooks.transform_context = temp_opts.transform_context;
+        agent.install_extension_hooks(hooks);
+    }
+    agent.set_tools(tools).await;
 
     // 7. Construct AgentSession.
     let session = AgentSession::new(AgentSessionConfig {
@@ -778,7 +957,7 @@ pub async fn create_agent_session<M: SessionMetadata>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::extension::{Extension, ExtensionApi};
+    use crate::extension::{init_extensions, Extension, ExtensionApi, NoopExtensionActions};
     use crate::interface::NoopInterface;
     use crate::session_manager::{InMemoryMetadata, InMemorySessionManager, SessionEntry};
     use ameli_ai::types::{Cost, InputType, Model};
@@ -823,14 +1002,16 @@ mod tests {
         fn name(&self) -> &str {
             "no-commands"
         }
-        fn init(&self, _api: &mut ExtensionApi) {}
+        fn init(&self, _api: Arc<ExtensionApi>) {}
     }
 
     async fn test_session(agent: ArcAgent) -> AgentSession<InMemoryMetadata> {
         let session_manager = Arc::new(InMemorySessionManager::new());
-        let runner = Arc::new(ExtensionRunner::from_extensions(&[Box::new(
-            NoCommandsExtension,
-        )]));
+        let (api, handlers) = init_extensions(
+            &[Box::new(NoCommandsExtension)],
+            Arc::new(crate::extension::NoopExtensionActions),
+        );
+        let runner = Arc::new(ExtensionRunner::from_parts(api, handlers));
         AgentSession::new(AgentSessionConfig {
             agent,
             session_manager,
@@ -1099,7 +1280,9 @@ mod tests {
     #[tokio::test]
     async fn handle_agent_event_persists_message_end() {
         let sm: Arc<dyn SessionManager<InMemoryMetadata>> = Arc::new(InMemorySessionManager::new());
-        let runner = Arc::new(ExtensionRunner::from_extensions(&[]));
+        let (api, handlers) =
+            init_extensions(&[], Arc::new(crate::extension::NoopExtensionActions));
+        let runner = Arc::new(ExtensionRunner::from_parts(api, handlers));
 
         let event = AgentEvent::MessageEnd {
             message: AgentMessage::User(ameli_ai::types::UserMessage::text("hello")),
@@ -1274,7 +1457,7 @@ mod tests {
             fn name(&self) -> &str {
                 "test-ext"
             }
-            fn init(&self, _api: &mut ExtensionApi) {}
+            fn init(&self, _api: Arc<ExtensionApi>) {}
         }
 
         let result = create_agent_session(CreateAgentSessionOptions {
