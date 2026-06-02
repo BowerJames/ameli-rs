@@ -936,7 +936,11 @@ impl ExtensionRunner {
 
     /// Build an [`ExtensionContext`] for handler dispatch.
     fn make_context(&self, cancel: CancellationToken) -> ExtensionContext {
-        ExtensionContext::new(self.api.clone(), Some(cancel))
+        let interface = self
+            .api()
+            .get_interface()
+            .unwrap_or_else(|| Arc::new(crate::interface::NoopInterface));
+        ExtensionContext::new(interface, Some(cancel))
     }
 }
 

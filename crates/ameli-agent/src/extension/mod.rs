@@ -43,6 +43,7 @@ pub mod context;
 pub mod events;
 pub mod runner;
 
+use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, RwLock};
@@ -231,7 +232,42 @@ pub struct ExtensionHandlers {
     pub tools: Vec<Named<Arc<dyn AgentTool>>>,
 }
 
+impl fmt::Debug for ExtensionHandlers {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ExtensionHandlers")
+            .field("notifications", &self.notification_count())
+            .field("hooks", &self.hook_count())
+            .field("commands", &self.commands.len())
+            .field("tools", &self.tools.len())
+            .finish()
+    }
+}
+
 impl ExtensionHandlers {
+    fn notification_count(&self) -> usize {
+        self.agent_start_handlers.len()
+            + self.agent_end_handlers.len()
+            + self.turn_start_handlers.len()
+            + self.turn_end_handlers.len()
+            + self.message_start_handlers.len()
+            + self.message_update_handlers.len()
+            + self.tool_execution_start_handlers.len()
+            + self.tool_execution_update_handlers.len()
+            + self.tool_execution_end_handlers.len()
+            + self.session_start_handlers.len()
+            + self.session_shutdown_handlers.len()
+    }
+
+    fn hook_count(&self) -> usize {
+        self.message_end_handlers.len()
+            + self.tool_call_handlers.len()
+            + self.tool_result_handlers.len()
+            + self.context_handlers.len()
+            + self.before_agent_start_handlers.len()
+            + self.format_compaction_summary_handlers.len()
+            + self.format_branch_summary_handlers.len()
+    }
+
     /// Returns `true` if no handlers of any kind have been registered.
     pub(crate) fn is_empty(&self) -> bool {
         self.agent_start_handlers.is_empty()
@@ -284,6 +320,24 @@ pub struct ExtensionApi {
 
     /// Next-turn message queue for deferred message delivery.
     next_turn_queue: Mutex<Vec<AgentMessage>>,
+}
+
+impl fmt::Debug for ExtensionApi {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let regs = self.registrations.lock().unwrap_or_else(|e| e.into_inner());
+        f.debug_struct("ExtensionApi")
+            .field("commands", &regs.commands.len())
+            .field("tools", &regs.tools.len())
+            .field(
+                "interface",
+                &self
+                    .interface
+                    .read()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .is_some(),
+            )
+            .finish()
+    }
 }
 
 impl ExtensionApi {
@@ -927,7 +981,7 @@ mod tests {
         assert_eq!(handlers.agent_start_handlers.len(), 1);
 
         // Call the handler (with a dummy context)
-        let ctx = ExtensionContext::new(api.clone(), None);
+        let ctx = ExtensionContext::new(Arc::new(crate::interface::NoopInterface), None);
         let _ = (handlers.agent_start_handlers[0].handler)(AgentStartEvent, ctx).await;
         assert_eq!(call_count.load(Ordering::SeqCst), 1);
     }
@@ -972,7 +1026,7 @@ mod tests {
         let handlers = api.take_handlers();
         assert_eq!(handlers.agent_start_handlers.len(), 2);
 
-        let ctx = ExtensionContext::new(api.clone(), None);
+        let ctx = ExtensionContext::new(Arc::new(crate::interface::NoopInterface), None);
         for h in &handlers.agent_start_handlers {
             let _ = (h.handler)(AgentStartEvent, ctx.clone()).await;
         }

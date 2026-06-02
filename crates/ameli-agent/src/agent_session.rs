@@ -361,8 +361,13 @@ impl<M: SessionMetadata> AgentSession<M> {
     ///
     /// Dispatches to the first registered handler with matching name.
     pub async fn command(&self, name: &str, args: &str) -> anyhow::Result<()> {
+        let interface = self
+            .runner
+            .api()
+            .get_interface()
+            .unwrap_or_else(|| Arc::new(crate::interface::NoopInterface));
         let ctx = crate::extension::events::CommandContext {
-            extension_context: ExtensionContext::new(self.runner.api().clone(), None),
+            extension_context: ExtensionContext::new(interface, None),
         };
         self.runner.execute_command(name, args, ctx).await
     }
@@ -989,7 +994,7 @@ pub async fn create_agent_session<M: SessionMetadata>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::extension::{init_extensions, Extension, ExtensionApi, NoopExtensionActions};
+    use crate::extension::{init_extensions, Extension, ExtensionApi};
     use crate::interface::NoopInterface;
     use crate::session_manager::{InMemoryMetadata, InMemorySessionManager, SessionEntry};
     use ameli_ai::types::{Cost, InputType, Model};
