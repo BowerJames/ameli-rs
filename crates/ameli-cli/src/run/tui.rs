@@ -5,6 +5,7 @@
 //! real-time. User input is forwarded to the agent session as prompts,
 //! commands, or steering messages.
 
+use ameli_agent::interface::{Interface, NotifyKind, NotifyMessage};
 use ameli_agent::session_manager::InMemoryMetadata;
 use ameli_agent::AgentSession;
 use ameli_agent_core::types::{AgentEvent, AgentMessage};
@@ -25,6 +26,33 @@ use ratatui::{
 use std::io::Write;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+
+// ---------------------------------------------------------------------------
+// TuiInterface — forwards extension notifications to the TUI event loop
+// ---------------------------------------------------------------------------
+
+/// [`Interface`] implementation that sends [`NotifyMessage`]s through a channel
+/// to the TUI event loop for rendering in the chat log.
+///
+/// This replaces `NoopInterface` so that extension commands and hooks can
+/// display output to the user.
+pub struct TuiInterface {
+    tx: mpsc::UnboundedSender<NotifyMessage>,
+}
+
+impl TuiInterface {
+    /// Create a new TUI interface that forwards notifications to the given
+    /// channel sender.
+    pub fn new(tx: mpsc::UnboundedSender<NotifyMessage>) -> Self {
+        Self { tx }
+    }
+}
+
+impl Interface for TuiInterface {
+    fn notify(&self, message: NotifyMessage) {
+        let _ = self.tx.send(message);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // TerminalGuard — ensures terminal is restored even on panic/error
@@ -60,6 +88,7 @@ enum ChatEntry {
     ToolEnd { name: String, is_error: bool },
     Error { message: String },
     Info { message: String },
+    Notify { message: String, kind: NotifyKind },
 }
 
 // ---------------------------------------------------------------------------
@@ -99,7 +128,13 @@ impl TuiState {
 ///
 /// Takes ownership of the session and the extension set. The session is
 /// shut down when the user exits.
-pub async fn run(session: Arc<AgentSession<InMemoryMetadata>>) -> Result<()> {
+///
+/// `notify_rx` receives [`NotifyMessage`]s forwarded by [`TuiInterface`] and
+/// renders them in the chat log.
+pub async fn run(
+    session: Arc<AgentSession<InMemoryMetadata>>,
+    mut notify_rx: mpsc::UnboundedReceiver<NotifyMessage>,
+) -> Result<()> {
     // 1. Set up terminal
     terminal::enable_raw_mode()?;
     let mut stdout = std::io::stdout();
@@ -159,6 +194,20 @@ pub async fn run(session: Arc<AgentSession<InMemoryMetadata>>) -> Result<()> {
             event = agent_rx.recv() => {
                 if let Some(event) = event {
                     handle_agent_event(event, &mut state);
+                }
+            }
+            notify = notify_rx.recv() => {
+                if let Some(msg) = notify {
+                    match msg {
+                        NotifyMessage::Text { message, kind } => {
+                            state.entries.push(ChatEntry::Notify { message, kind });
+                        }
+                        NotifyMessage::Custom(c) => {
+                            state.entries.push(ChatEntry::Info {
+                                message: format!("[{}] {}", c.message_type(), c.to_json()),
+                            });
+                        }
+                    }
                 }
             }
             err = error_rx.recv() => {
@@ -485,6 +534,17 @@ fn render_chat(frame: &mut Frame, area: Rect, state: &TuiState) {
                     Style::default().fg(Color::Blue),
                 )));
             }
+            ChatEntry::Notify { message, kind } => {
+                let color = match kind {
+                    NotifyKind::Info => Color::Cyan,
+                    NotifyKind::Warning => Color::Yellow,
+                    NotifyKind::Error => Color::Red,
+                };
+                lines.push(Line::from(Span::styled(
+                    format!("\u{00b7} {message}"),
+                    Style::default().fg(color),
+                )));
+            }
         }
     }
 
@@ -606,6 +666,7 @@ fn estimate_entry_lines(entry: &ChatEntry, width: u16) -> u16 {
         ChatEntry::ToolEnd { name, .. } => format!("  \u{2713} {name}"),
         ChatEntry::Error { message } => format!("Error: {message}"),
         ChatEntry::Info { message } => message.clone(),
+        ChatEntry::Notify { message, .. } => format!("\u{00b7} {message}"),
     };
     wrap_line_count(&text, width)
 }

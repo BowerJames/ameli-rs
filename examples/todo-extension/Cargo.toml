@@ -1,0 +1,17 @@
+[package]
+name = "todo-extension"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+ameli-agent = { path = "../../crates/ameli-agent" }
+ameli-agent-core = { path = "../../crates/ameli-agent-core" }
+ameli-ai = { path = "../../crates/ameli-ai" }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+
+[workspace]
