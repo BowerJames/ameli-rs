@@ -9,11 +9,12 @@ pub mod tui;
 use crate::cli::RunArgs;
 use ameli_agent::auth_storage::InMemoryAuthStorage;
 use ameli_agent::session_manager::{InMemorySessionManager, ModelRef};
-use ameli_agent::{create_agent_session, CreateAgentSessionOptions, NoopInterface};
+use ameli_agent::{create_agent_session, CreateAgentSessionOptions};
 use ameli_agent_core::types::ThinkingLevel;
 use ameli_model_registry::DefaultModelRegistry;
 use anyhow::Result;
 use std::sync::Arc;
+use tokio::sync::mpsc;
 
 // ---------------------------------------------------------------------------
 // Public entry point
@@ -41,7 +42,11 @@ pub async fn run_run(args: RunArgs) -> Result<()> {
     // 5. Load extensions from dylib paths
     let ext_set = extension_loader::load_extension_set(&args.extension)?;
 
-    // 6. Create the agent session
+    // 6. Create notification channel for TuiInterface
+    let (notify_tx, notify_rx) = mpsc::unbounded_channel();
+    let interface = Arc::new(tui::TuiInterface::new(notify_tx));
+
+    // 7. Create the agent session
     let session = create_agent_session(CreateAgentSessionOptions {
         model: ModelRef {
             provider: args.provider.clone(),
@@ -50,7 +55,7 @@ pub async fn run_run(args: RunArgs) -> Result<()> {
         model_registry,
         auth_storage,
         session_manager: Arc::new(InMemorySessionManager::new()),
-        interface: Arc::new(NoopInterface),
+        interface,
         extensions: ext_set.extensions,
         thinking_level: Some(thinking_level),
         system_prompt: None,
@@ -58,8 +63,8 @@ pub async fn run_run(args: RunArgs) -> Result<()> {
     .await
     .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    // 7. Launch TUI — this blocks until the user exits
-    tui::run(Arc::new(session.session)).await?;
+    // 8. Launch TUI — this blocks until the user exits
+    tui::run(Arc::new(session.session), notify_rx).await?;
 
     // ext_set._libraries are dropped here, unloading extension dylibs
     Ok(())
