@@ -4,7 +4,7 @@
 //! Implementations vary by mode:
 //! - [`NoopInterface`] — headless/print mode (silently discarded)
 //! - Future: `RpcInterface` — forwards to RPC client
-//! - Future: `TuiInterface` — interactive terminal
+//! - `TuiInterface` — interactive terminal (in `ameli-cli`)
 //!
 //! # Extensibility
 //!

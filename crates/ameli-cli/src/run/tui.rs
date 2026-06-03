@@ -36,6 +36,7 @@ use tokio::sync::mpsc;
 ///
 /// This replaces `NoopInterface` so that extension commands and hooks can
 /// display output to the user.
+#[derive(Debug)]
 pub struct TuiInterface {
     tx: mpsc::UnboundedSender<NotifyMessage>,
 }
