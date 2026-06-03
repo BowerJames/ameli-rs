@@ -364,10 +364,10 @@ pub struct Agent {
 
     // Immutable config captured at construction time.
     convert_to_llm: Arc<ConvertToLlmFn>,
-    transform_context: Option<Arc<TransformContextFn>>,
+    transform_context: std::sync::RwLock<Option<Arc<TransformContextFn>>>,
     get_api_key: Option<Arc<GetApiKeyFn>>,
-    before_tool_call: Option<Arc<BeforeToolCallFn>>,
-    after_tool_call: Option<Arc<AfterToolCallFn>>,
+    before_tool_call: std::sync::RwLock<Option<Arc<BeforeToolCallFn>>>,
+    after_tool_call: std::sync::RwLock<Option<Arc<AfterToolCallFn>>>,
     prepare_next_turn: Option<Arc<PrepareNextTurnFn>>,
     session_id: Option<String>,
     thinking_budgets: Option<ThinkingBudgets>,
@@ -417,10 +417,10 @@ impl Agent {
             convert_to_llm: options
                 .convert_to_llm
                 .unwrap_or_else(|| Arc::new(|msgs| default_convert_to_llm(msgs))),
-            transform_context: options.transform_context,
+            transform_context: std::sync::RwLock::new(options.transform_context),
             get_api_key: options.get_api_key,
-            before_tool_call: options.before_tool_call,
-            after_tool_call: options.after_tool_call,
+            before_tool_call: std::sync::RwLock::new(options.before_tool_call),
+            after_tool_call: std::sync::RwLock::new(options.after_tool_call),
             prepare_next_turn: options.prepare_next_turn,
             session_id: options.session_id,
             thinking_budgets: options.thinking_budgets,
@@ -589,6 +589,45 @@ impl Agent {
         inner.thinking_level = level;
     }
 
+    /// Replace the available tools. Must only be called when idle.
+    pub async fn set_tools(&self, tools: Vec<Arc<dyn AgentTool>>) {
+        let mut inner = self.inner.lock().await;
+        inner.tools = tools;
+    }
+
+    /// Get the names of currently available tools.
+    pub async fn get_tool_names(&self) -> Vec<String> {
+        let inner = self.inner.lock().await;
+        inner.tools.iter().map(|t| t.name()).collect()
+    }
+
+    /// Install extension hooks after construction.
+    ///
+    /// Must only be called when the agent is idle, before the first run.
+    /// Calling this during an active run may result in partially-written
+    /// hooks being visible to concurrent agent loop reads (e.g.,
+    /// `before_tool_call` updated but `after_tool_call` not yet).
+    pub fn install_extension_hooks(&self, hooks: ExtensionHooks) {
+        if let Some(hook) = hooks.before_tool_call {
+            *self
+                .before_tool_call
+                .write()
+                .unwrap_or_else(|e| e.into_inner()) = Some(hook);
+        }
+        if let Some(hook) = hooks.after_tool_call {
+            *self
+                .after_tool_call
+                .write()
+                .unwrap_or_else(|e| e.into_inner()) = Some(hook);
+        }
+        if let Some(hook) = hooks.transform_context {
+            *self
+                .transform_context
+                .write()
+                .unwrap_or_else(|e| e.into_inner()) = Some(hook);
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Private: context/config builders
     // -----------------------------------------------------------------------
@@ -712,6 +751,26 @@ impl fmt::Debug for Agent {
 }
 
 // ---------------------------------------------------------------------------
+// ExtensionHooks — post-construction hook installation
+// ---------------------------------------------------------------------------
+
+/// Extension hooks that can be installed on an [`Agent`] after construction.
+///
+/// Use [`Agent::install_extension_hooks`] to apply these to an already-created
+/// agent. This allows the agent to be constructed before extensions are
+/// initialized, then have hooks installed once extension registrations are
+/// available.
+#[derive(Default)]
+pub struct ExtensionHooks {
+    /// Hook called before a tool executes.
+    pub before_tool_call: Option<Arc<BeforeToolCallFn>>,
+    /// Hook called after a tool finishes executing.
+    pub after_tool_call: Option<Arc<AfterToolCallFn>>,
+    /// Hook to transform context before each LLM call.
+    pub transform_context: Option<Arc<TransformContextFn>>,
+}
+
+// ---------------------------------------------------------------------------
 // build_loop_config — creates AgentLoopConfig with Arc<Agent> closures
 // ---------------------------------------------------------------------------
 
@@ -736,10 +795,22 @@ async fn build_loop_config(
     };
 
     let convert_to_llm = agent.convert_to_llm.clone();
-    let transform_context = agent.transform_context.clone();
+    let transform_context = agent
+        .transform_context
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     let get_api_key = agent.get_api_key.clone();
-    let before_tool_call = agent.before_tool_call.clone();
-    let after_tool_call = agent.after_tool_call.clone();
+    let before_tool_call = agent
+        .before_tool_call
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let after_tool_call = agent
+        .after_tool_call
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     let prepare_next_turn_fn = agent.prepare_next_turn.clone();
 
     // Steering closure: drains the agent's steering queue
@@ -953,6 +1024,25 @@ impl ArcAgent {
     /// Must only be called when the agent is idle (no active run).
     pub async fn set_thinking_level(&self, level: ThinkingLevel) {
         self.inner.set_thinking_level(level).await
+    }
+
+    /// Replace the available tools. Must only be called when idle.
+    pub async fn set_tools(&self, tools: Vec<Arc<dyn AgentTool>>) {
+        self.inner.set_tools(tools).await
+    }
+
+    /// Get the names of currently available tools.
+    pub async fn get_tool_names(&self) -> Vec<String> {
+        self.inner.get_tool_names().await
+    }
+
+    /// Install extension hooks after construction.
+    ///
+    /// Must only be called when the agent is idle, before the first run.
+    /// Calling this during an active run may result in partially-written
+    /// hooks being visible to concurrent agent loop reads.
+    pub fn install_extension_hooks(&self, hooks: ExtensionHooks) {
+        self.inner.install_extension_hooks(hooks)
     }
 
     // -----------------------------------------------------------------------

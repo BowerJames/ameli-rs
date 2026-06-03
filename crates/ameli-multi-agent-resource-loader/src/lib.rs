@@ -268,7 +268,7 @@ mod tests {
         fn name(&self) -> &str {
             "no-op"
         }
-        fn init(&self, _api: &mut ExtensionApi) {}
+        fn init(&self, _api: Arc<ExtensionApi>) {}
     }
 
     struct MockResourceLoader;

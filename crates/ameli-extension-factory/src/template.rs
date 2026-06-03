@@ -109,7 +109,7 @@ pub struct TemplateInfo {
 ///
 /// impl Extension for AppendSystemMessageExtension {
 ///     fn name(&self) -> &str { "append_system_message" }
-///     fn init(&self, _api: &mut ExtensionApi) {}
+///     fn init(&self, _api: std::sync::Arc<ExtensionApi>) {}
 /// }
 /// ```
 pub trait ExtensionTemplate: Send + Sync {
