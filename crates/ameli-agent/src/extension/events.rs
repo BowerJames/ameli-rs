@@ -37,6 +37,15 @@ use ameli_ai::types::{
 };
 use serde_json::Value;
 use std::fmt;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+
+// ---------------------------------------------------------------------------
+// Type alias
+// ---------------------------------------------------------------------------
+
+type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
 // ---------------------------------------------------------------------------
 // Session lifecycle reasons
@@ -400,6 +409,33 @@ impl fmt::Debug for CommandContext {
     }
 }
 
+/// Handler function type for extension commands.
+pub type CommandHandlerFn =
+    dyn Fn(String, CommandContext) -> BoxFuture<anyhow::Result<()>> + Send + Sync;
+
+/// A command registered by an extension.
+#[derive(Clone)]
+pub struct RegisteredCommand {
+    /// Command name (used for dispatch).
+    pub name: String,
+    /// Optional description for documentation/discovery.
+    pub description: Option<String>,
+    /// Name of the extension that registered this command.
+    pub extension_name: String,
+    /// Handler function.
+    pub handler: Arc<CommandHandlerFn>,
+}
+
+impl fmt::Debug for RegisteredCommand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RegisteredCommand")
+            .field("name", &self.name)
+            .field("description", &self.description)
+            .field("extension_name", &self.extension_name)
+            .finish_non_exhaustive()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Enum for internal dispatch
 // ---------------------------------------------------------------------------
@@ -561,6 +597,19 @@ mod tests {
             tool_results: vec![],
         };
         assert_eq!(end.turn_index, 3);
+    }
+
+    #[test]
+    fn registered_command_debug() {
+        let cmd = RegisteredCommand {
+            name: "my-command".into(),
+            description: Some("Does a thing".into()),
+            extension_name: "test-ext".into(),
+            handler: Arc::new(|_args, _ctx| Box::pin(async { Ok(()) })),
+        };
+        let debug = format!("{cmd:?}");
+        assert!(debug.contains("my-command"));
+        assert!(debug.contains("test-ext"));
     }
 
     #[test]
