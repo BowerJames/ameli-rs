@@ -244,7 +244,7 @@ pub struct ExtensionRunner {
     /// Handlers registered by extensions, behind `RwLock` for interior mutability.
     handlers: parking_lot::RwLock<ExtensionHandlers>,
     /// Error listeners.
-    error_listeners: std::sync::Mutex<Vec<ExtensionErrorListener>>,
+    error_listeners: parking_lot::Mutex<Vec<ExtensionErrorListener>>,
     /// UI interface for creating ExtensionContext.
     interface: Arc<dyn Interface>,
     /// Turn counter for providing turn_index in events.
@@ -263,7 +263,7 @@ impl ExtensionRunner {
     pub fn empty(interface: Arc<dyn Interface>) -> Self {
         Self {
             handlers: parking_lot::RwLock::new(ExtensionHandlers::empty()),
-            error_listeners: std::sync::Mutex::new(Vec::new()),
+            error_listeners: parking_lot::Mutex::new(Vec::new()),
             interface,
             turn_index: AtomicU32::new(0),
         }
@@ -404,10 +404,7 @@ impl ExtensionRunner {
 
     /// Register an error listener called when an extension handler fails.
     pub fn on_error(&self, listener: ExtensionErrorListener) {
-        let mut listeners = self
-            .error_listeners
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut listeners = self.error_listeners.lock();
         listeners.push(listener);
     }
 
@@ -1181,10 +1178,7 @@ impl ExtensionRunner {
     /// This is provided as a public API for callers that want to report
     /// extension-related errors through the listener infrastructure.
     pub fn report_error(&self, error: ExtensionError) {
-        let listeners = self
-            .error_listeners
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let listeners = self.error_listeners.lock();
         for listener in listeners.iter() {
             listener(error.clone());
         }
