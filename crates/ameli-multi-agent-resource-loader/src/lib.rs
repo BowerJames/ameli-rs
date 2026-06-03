@@ -265,10 +265,7 @@ mod tests {
     struct NoOpExtension;
 
     impl ameli_agent::extension::Extension for NoOpExtension {
-        fn name(&self) -> &str {
-            "no-op"
-        }
-        fn init(&self, _api: &mut ExtensionApi) {}
+        fn init(&self, _api: &std::sync::Arc<ExtensionApi>) {}
     }
 
     struct MockResourceLoader;

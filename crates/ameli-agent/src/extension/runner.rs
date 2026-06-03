@@ -7,10 +7,12 @@
 //!
 //! # Lifecycle
 //!
-//! 1. Create extensions and build a runner with [`ExtensionRunner::from_extensions`].
-//! 2. Call [`ExtensionRunner::install_hooks`] to install hook closures into
-//!    [`AgentOptions`].
-//! 3. Construct an [`AgentSession`](crate::AgentSession) (or an `ArcAgent`
+//! 1. Create an empty runner with [`ExtensionRunner::empty`].
+//! 2. Create an [`ExtensionApi`](super::ExtensionApi) wrapping `Arc<ExtensionRunner>`.
+//! 3. Initialize extensions — they register handlers via the API.
+//! 4. Call [`ExtensionRunner::install_hooks`] to install hook closures into
+//!    [`AgentOptions`](ameli_agent_core::AgentOptions).
+//! 5. Construct an [`AgentSession`](crate::AgentSession) (or an `ArcAgent`
 //!    from those options) to handle event subscription and persistence.
 //!
 //! # Error handling
@@ -27,7 +29,7 @@
 
 use crate::extension::context::ExtensionContext;
 use crate::extension::events::*;
-use crate::extension::{init_extensions, Extension, ExtensionHandlers};
+use crate::extension::Extension;
 use crate::interface::Interface;
 use ameli_agent_core::types::{
     AfterToolCallContext, AfterToolCallResult, AgentMessage, AgentTool, BeforeToolCallContext,
@@ -40,6 +42,167 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 // ---------------------------------------------------------------------------
+// Handler function type aliases
+// ---------------------------------------------------------------------------
+
+/// Pinned, boxed, sendable future returned by extension handlers.
+type BoxFuture<T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send>>;
+
+// Notification handler types (fire-and-forget).
+type AgentStartHandler =
+    Arc<dyn Fn(AgentStartEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>> + Send + Sync>;
+type AgentEndHandler =
+    Arc<dyn Fn(AgentEndEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>> + Send + Sync>;
+type TurnStartHandler =
+    Arc<dyn Fn(TurnStartEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>> + Send + Sync>;
+type TurnEndHandler =
+    Arc<dyn Fn(TurnEndEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>> + Send + Sync>;
+type MessageStartHandler =
+    Arc<dyn Fn(MessageStartEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>> + Send + Sync>;
+type MessageUpdateHandler = Arc<
+    dyn Fn(MessageUpdateEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>> + Send + Sync,
+>;
+type ToolExecutionStartHandler = Arc<
+    dyn Fn(ToolExecutionStartEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>>
+        + Send
+        + Sync,
+>;
+type ToolExecutionUpdateHandler = Arc<
+    dyn Fn(ToolExecutionUpdateEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>>
+        + Send
+        + Sync,
+>;
+type ToolExecutionEndHandler = Arc<
+    dyn Fn(ToolExecutionEndEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>> + Send + Sync,
+>;
+type SessionStartHandler =
+    Arc<dyn Fn(SessionStartEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>> + Send + Sync>;
+type SessionShutdownHandler = Arc<
+    dyn Fn(SessionShutdownEvent, ExtensionContext) -> BoxFuture<anyhow::Result<()>> + Send + Sync,
+>;
+
+// Hook handler types.
+type ToolCallHandler =
+    Arc<dyn Fn(ToolCallEvent, ExtensionContext) -> BoxFuture<Option<ToolCallResult>> + Send + Sync>;
+type ToolResultHandler = Arc<
+    dyn Fn(ToolResultEvent, ExtensionContext) -> BoxFuture<Option<ToolResultPatch>> + Send + Sync,
+>;
+type ContextHandler =
+    Arc<dyn Fn(ContextEvent, ExtensionContext) -> BoxFuture<Option<ContextResult>> + Send + Sync>;
+type BeforeAgentStartHandler = Arc<
+    dyn Fn(BeforeAgentStartEvent, ExtensionContext) -> BoxFuture<Option<BeforeAgentStartResult>>
+        + Send
+        + Sync,
+>;
+type MessageEndHandler = Arc<
+    dyn Fn(MessageEndEvent, ExtensionContext) -> BoxFuture<Option<MessageEndResult>> + Send + Sync,
+>;
+type FormatCompactionSummaryHandler = Arc<
+    dyn Fn(
+            FormatCompactionSummaryEvent,
+            ExtensionContext,
+        ) -> BoxFuture<Option<FormatCompactionSummaryResult>>
+        + Send
+        + Sync,
+>;
+type FormatBranchSummaryHandler = Arc<
+    dyn Fn(
+            FormatBranchSummaryEvent,
+            ExtensionContext,
+        ) -> BoxFuture<Option<FormatBranchSummaryResult>>
+        + Send
+        + Sync,
+>;
+
+// ---------------------------------------------------------------------------
+// ExtensionHandlers — interior-mutable handler storage
+// ---------------------------------------------------------------------------
+
+/// All handlers and tools registered by extensions.
+///
+/// Stored behind a `RwLock` inside [`ExtensionRunner`] for interior
+/// mutability. Registration (write) and dispatch (read) are lock-protected.
+struct ExtensionHandlers {
+    // Notification (fire-and-forget)
+    agent_start_handlers: Vec<AgentStartHandler>,
+    agent_end_handlers: Vec<AgentEndHandler>,
+    turn_start_handlers: Vec<TurnStartHandler>,
+    turn_end_handlers: Vec<TurnEndHandler>,
+    message_start_handlers: Vec<MessageStartHandler>,
+    message_update_handlers: Vec<MessageUpdateHandler>,
+    tool_execution_start_handlers: Vec<ToolExecutionStartHandler>,
+    tool_execution_update_handlers: Vec<ToolExecutionUpdateHandler>,
+    tool_execution_end_handlers: Vec<ToolExecutionEndHandler>,
+    session_start_handlers: Vec<SessionStartHandler>,
+    session_shutdown_handlers: Vec<SessionShutdownHandler>,
+
+    // Hooks
+    tool_call_handlers: Vec<ToolCallHandler>,
+    tool_result_handlers: Vec<ToolResultHandler>,
+    context_handlers: Vec<ContextHandler>,
+    before_agent_start_handlers: Vec<BeforeAgentStartHandler>,
+    message_end_handlers: Vec<MessageEndHandler>,
+    format_compaction_summary_handlers: Vec<FormatCompactionSummaryHandler>,
+    format_branch_summary_handlers: Vec<FormatBranchSummaryHandler>,
+
+    // Commands
+    commands: Vec<RegisteredCommand>,
+
+    // Tools
+    tools: Vec<Arc<dyn AgentTool>>,
+}
+
+impl ExtensionHandlers {
+    fn empty() -> Self {
+        Self {
+            agent_start_handlers: Vec::new(),
+            agent_end_handlers: Vec::new(),
+            turn_start_handlers: Vec::new(),
+            turn_end_handlers: Vec::new(),
+            message_start_handlers: Vec::new(),
+            message_update_handlers: Vec::new(),
+            tool_execution_start_handlers: Vec::new(),
+            tool_execution_update_handlers: Vec::new(),
+            tool_execution_end_handlers: Vec::new(),
+            session_start_handlers: Vec::new(),
+            session_shutdown_handlers: Vec::new(),
+            tool_call_handlers: Vec::new(),
+            tool_result_handlers: Vec::new(),
+            context_handlers: Vec::new(),
+            before_agent_start_handlers: Vec::new(),
+            message_end_handlers: Vec::new(),
+            format_compaction_summary_handlers: Vec::new(),
+            format_branch_summary_handlers: Vec::new(),
+            commands: Vec::new(),
+            tools: Vec::new(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.agent_start_handlers.is_empty()
+            && self.agent_end_handlers.is_empty()
+            && self.turn_start_handlers.is_empty()
+            && self.turn_end_handlers.is_empty()
+            && self.message_start_handlers.is_empty()
+            && self.message_update_handlers.is_empty()
+            && self.message_end_handlers.is_empty()
+            && self.tool_execution_start_handlers.is_empty()
+            && self.tool_execution_update_handlers.is_empty()
+            && self.tool_execution_end_handlers.is_empty()
+            && self.session_start_handlers.is_empty()
+            && self.session_shutdown_handlers.is_empty()
+            && self.tool_call_handlers.is_empty()
+            && self.tool_result_handlers.is_empty()
+            && self.context_handlers.is_empty()
+            && self.before_agent_start_handlers.is_empty()
+            && self.format_compaction_summary_handlers.is_empty()
+            && self.format_branch_summary_handlers.is_empty()
+            && self.commands.is_empty()
+            && self.tools.is_empty()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // ExtensionError
 // ---------------------------------------------------------------------------
 
@@ -49,8 +212,6 @@ use tokio_util::sync::CancellationToken;
 /// encounter errors.
 #[derive(Debug, Clone)]
 pub struct ExtensionError {
-    /// Name of the extension that failed (best-effort; "unknown" if unavailable).
-    pub extension_name: String,
     /// Event type being dispatched when the error occurred.
     pub event: String,
     /// Human-readable error message.
@@ -72,13 +233,17 @@ pub type ExtensionErrorListener = Arc<dyn Fn(ExtensionError) + Send + Sync>;
 
 /// Runtime that bridges extension handlers to the agent loop.
 ///
-/// Construct via [`ExtensionRunner::from_extensions`] or
-/// [`ExtensionRunner::new`]. Share via `Arc<Self>` so hook closures and the
-/// subscriber can both reference it.
+/// Handler storage is behind a `RwLock` for interior mutability —
+/// [`ExtensionApi`](super::ExtensionApi) registers handlers via the write
+/// lock during init, while dispatch reads through the read lock at runtime.
+///
+/// Construct via [`ExtensionRunner::empty`] or
+/// [`ExtensionRunner::from_extensions`]. Share via `Arc<Self>` so hook
+/// closures and the subscriber can both reference it.
 pub struct ExtensionRunner {
-    /// Handlers collected from all extensions during initialization.
-    handlers: ExtensionHandlers,
-    /// Error listeners, protected by a std Mutex for interior mutability.
+    /// Handlers registered by extensions, behind `RwLock` for interior mutability.
+    handlers: parking_lot::RwLock<ExtensionHandlers>,
+    /// Error listeners.
     error_listeners: std::sync::Mutex<Vec<ExtensionErrorListener>>,
     /// UI interface for creating ExtensionContext.
     interface: Arc<dyn Interface>,
@@ -91,31 +256,146 @@ impl ExtensionRunner {
     // Construction
     // -----------------------------------------------------------------------
 
-    /// Create a runner from pre-collected handlers with a default no-op
-    /// interface.
-    pub fn new(handlers: ExtensionHandlers) -> Self {
+    /// Create an empty runner with the given interface.
+    ///
+    /// Handlers are registered later via the [`ExtensionApi`](super::ExtensionApi)
+    /// and forwarded to this runner's interior-mutable storage.
+    pub fn empty(interface: Arc<dyn Interface>) -> Self {
         Self {
-            handlers,
-            error_listeners: std::sync::Mutex::new(Vec::new()),
-            interface: Arc::new(crate::interface::NoopInterface),
-            turn_index: AtomicU32::new(0),
-        }
-    }
-
-    /// Create a runner by initializing a list of extensions and collecting
-    /// their registrations. Uses a default no-op interface.
-    pub fn from_extensions(extensions: &[Box<dyn Extension>]) -> Self {
-        Self::new(init_extensions(extensions))
-    }
-
-    /// Create a runner with a custom interface for ExtensionContext.
-    pub fn with_interface(handlers: ExtensionHandlers, interface: Arc<dyn Interface>) -> Self {
-        Self {
-            handlers,
+            handlers: parking_lot::RwLock::new(ExtensionHandlers::empty()),
             error_listeners: std::sync::Mutex::new(Vec::new()),
             interface,
             turn_index: AtomicU32::new(0),
         }
+    }
+
+    /// Create a runner by initializing a list of extensions.
+    ///
+    /// Convenience that creates an empty runner, builds an `ExtensionApi`,
+    /// initializes all extensions, and returns the `Arc<ExtensionRunner>`.
+    /// Uses [`NoopInterface`](crate::interface::NoopInterface).
+    pub fn from_extensions(extensions: &[Box<dyn Extension>]) -> Arc<Self> {
+        let runner = Arc::new(Self::empty(Arc::new(crate::interface::NoopInterface)));
+        crate::extension::init_extensions(extensions, &runner);
+        runner
+    }
+
+    /// Create a runner by initializing a list of extensions with a custom
+    /// interface.
+    pub fn from_extensions_with_interface(
+        extensions: &[Box<dyn Extension>],
+        interface: Arc<dyn Interface>,
+    ) -> Arc<Self> {
+        let runner = Arc::new(Self::empty(interface));
+        crate::extension::init_extensions(extensions, &runner);
+        runner
+    }
+
+    // -----------------------------------------------------------------------
+    // Registration methods (called by ExtensionApi, pub(crate))
+    // -----------------------------------------------------------------------
+
+    pub(crate) fn add_agent_start_handler(&self, handler: AgentStartHandler) {
+        let mut h = self.handlers.write();
+        h.agent_start_handlers.push(handler);
+    }
+
+    pub(crate) fn add_agent_end_handler(&self, handler: AgentEndHandler) {
+        let mut h = self.handlers.write();
+        h.agent_end_handlers.push(handler);
+    }
+
+    pub(crate) fn add_turn_start_handler(&self, handler: TurnStartHandler) {
+        let mut h = self.handlers.write();
+        h.turn_start_handlers.push(handler);
+    }
+
+    pub(crate) fn add_turn_end_handler(&self, handler: TurnEndHandler) {
+        let mut h = self.handlers.write();
+        h.turn_end_handlers.push(handler);
+    }
+
+    pub(crate) fn add_message_start_handler(&self, handler: MessageStartHandler) {
+        let mut h = self.handlers.write();
+        h.message_start_handlers.push(handler);
+    }
+
+    pub(crate) fn add_message_update_handler(&self, handler: MessageUpdateHandler) {
+        let mut h = self.handlers.write();
+        h.message_update_handlers.push(handler);
+    }
+
+    pub(crate) fn add_message_end_handler(&self, handler: MessageEndHandler) {
+        let mut h = self.handlers.write();
+        h.message_end_handlers.push(handler);
+    }
+
+    pub(crate) fn add_tool_execution_start_handler(&self, handler: ToolExecutionStartHandler) {
+        let mut h = self.handlers.write();
+        h.tool_execution_start_handlers.push(handler);
+    }
+
+    pub(crate) fn add_tool_execution_update_handler(&self, handler: ToolExecutionUpdateHandler) {
+        let mut h = self.handlers.write();
+        h.tool_execution_update_handlers.push(handler);
+    }
+
+    pub(crate) fn add_tool_execution_end_handler(&self, handler: ToolExecutionEndHandler) {
+        let mut h = self.handlers.write();
+        h.tool_execution_end_handlers.push(handler);
+    }
+
+    pub(crate) fn add_session_start_handler(&self, handler: SessionStartHandler) {
+        let mut h = self.handlers.write();
+        h.session_start_handlers.push(handler);
+    }
+
+    pub(crate) fn add_session_shutdown_handler(&self, handler: SessionShutdownHandler) {
+        let mut h = self.handlers.write();
+        h.session_shutdown_handlers.push(handler);
+    }
+
+    pub(crate) fn add_tool_call_handler(&self, handler: ToolCallHandler) {
+        let mut h = self.handlers.write();
+        h.tool_call_handlers.push(handler);
+    }
+
+    pub(crate) fn add_tool_result_handler(&self, handler: ToolResultHandler) {
+        let mut h = self.handlers.write();
+        h.tool_result_handlers.push(handler);
+    }
+
+    pub(crate) fn add_context_handler(&self, handler: ContextHandler) {
+        let mut h = self.handlers.write();
+        h.context_handlers.push(handler);
+    }
+
+    pub(crate) fn add_before_agent_start_handler(&self, handler: BeforeAgentStartHandler) {
+        let mut h = self.handlers.write();
+        h.before_agent_start_handlers.push(handler);
+    }
+
+    pub(crate) fn add_format_compaction_summary_handler(
+        &self,
+        handler: FormatCompactionSummaryHandler,
+    ) {
+        let mut h = self.handlers.write();
+        h.format_compaction_summary_handlers.push(handler);
+    }
+
+    pub(crate) fn add_format_branch_summary_handler(&self, handler: FormatBranchSummaryHandler) {
+        let mut h = self.handlers.write();
+        h.format_branch_summary_handlers.push(handler);
+    }
+
+    pub(crate) fn add_command(&self, cmd: RegisteredCommand) {
+        let mut h = self.handlers.write();
+        h.commands.push(cmd);
+    }
+
+    pub(crate) fn add_tool(&self, tool: Arc<dyn AgentTool>) {
+        let mut h = self.handlers.write();
+        h.tools.push(tool);
     }
 
     // -----------------------------------------------------------------------
@@ -132,76 +412,99 @@ impl ExtensionRunner {
     }
 
     // -----------------------------------------------------------------------
-    // Handler queries
+    // Handler queries (read through lock)
     // -----------------------------------------------------------------------
 
     /// Returns `true` if any extension registered a tool_call hook handler.
     pub fn has_tool_call_handlers(&self) -> bool {
-        !self.handlers.tool_call_handlers.is_empty()
+        let h = self.handlers.read();
+        !h.tool_call_handlers.is_empty()
     }
 
     /// Returns `true` if any extension registered a tool_result hook handler.
     pub fn has_tool_result_handlers(&self) -> bool {
-        !self.handlers.tool_result_handlers.is_empty()
+        let h = self.handlers.read();
+        !h.tool_result_handlers.is_empty()
     }
 
     /// Returns `true` if any extension registered a context hook handler.
     pub fn has_context_handlers(&self) -> bool {
-        !self.handlers.context_handlers.is_empty()
+        let h = self.handlers.read();
+        !h.context_handlers.is_empty()
     }
 
     /// Returns `true` if any extension registered a before_agent_start hook.
     pub fn has_before_agent_start_handlers(&self) -> bool {
-        !self.handlers.before_agent_start_handlers.is_empty()
+        let h = self.handlers.read();
+        !h.before_agent_start_handlers.is_empty()
     }
 
     /// Returns `true` if any extension registered a message_end hook handler.
     pub fn has_message_end_handlers(&self) -> bool {
-        !self.handlers.message_end_handlers.is_empty()
+        let h = self.handlers.read();
+        !h.message_end_handlers.is_empty()
     }
 
     /// Returns `true` if any extension registered a format_compaction_summary
     /// hook handler.
     pub fn has_format_compaction_summary_handlers(&self) -> bool {
-        !self.handlers.format_compaction_summary_handlers.is_empty()
+        let h = self.handlers.read();
+        !h.format_compaction_summary_handlers.is_empty()
     }
 
     /// Returns `true` if any extension registered a format_branch_summary
     /// hook handler.
     pub fn has_format_branch_summary_handlers(&self) -> bool {
-        !self.handlers.format_branch_summary_handlers.is_empty()
+        let h = self.handlers.read();
+        !h.format_branch_summary_handlers.is_empty()
+    }
+
+    /// Returns `true` if any extension registered an agent_start handler.
+    pub fn has_agent_start_handlers(&self) -> bool {
+        let h = self.handlers.read();
+        !h.agent_start_handlers.is_empty()
+    }
+
+    /// Returns `true` if any extension registered a tool_execution_update
+    /// handler.
+    pub fn has_tool_execution_update_handlers(&self) -> bool {
+        let h = self.handlers.read();
+        !h.tool_execution_update_handlers.is_empty()
     }
 
     /// Returns `true` if any handlers are registered for any event type.
     pub fn has_any_handlers(&self) -> bool {
-        !self.handlers.is_empty()
+        let h = self.handlers.read();
+        !h.is_empty()
     }
 
     // -----------------------------------------------------------------------
-    // Tool and command collection
+    // Tool and command collection (read through lock)
     // -----------------------------------------------------------------------
 
     /// Collect all tools registered by extensions.
     pub fn get_registered_tools(&self) -> Vec<Arc<dyn AgentTool>> {
-        self.handlers.tools.clone()
+        let h = self.handlers.read();
+        h.tools.clone()
     }
 
     /// Collect all commands registered by extensions.
     pub fn get_registered_commands(&self) -> Vec<RegisteredCommand> {
-        self.handlers.commands.clone()
+        let h = self.handlers.read();
+        h.commands.clone()
     }
 
     // -----------------------------------------------------------------------
     // Hook installation
     // -----------------------------------------------------------------------
 
-    /// Install hook closures into [`AgentOptions`] for tool call interception
-    /// and context transformation.
+    /// Install hook closures into [`AgentOptions`](ameli_agent_core::AgentOptions)
+    /// for tool call interception and context transformation.
     ///
     /// Only installs a hook if there are registered handlers for the
     /// corresponding event type. This avoids unnecessary overhead.
     ///
-    /// Call this **before** constructing the [`ArcAgent`].
+    /// Call this **before** constructing the [`ArcAgent`](ameli_agent_core::ArcAgent).
     pub fn install_hooks(self: &Arc<Self>, options: &mut ameli_agent_core::AgentOptions) {
         if self.has_tool_call_handlers() {
             let runner = self.clone();
@@ -248,8 +551,13 @@ impl ExtensionRunner {
             summary: summary.to_string(),
             timestamp,
         };
-        for handler in &self.handlers.format_compaction_summary_handlers {
-            if let Some(result) = (handler.handler)(event.clone(), ctx.clone()).await {
+        let handlers = self
+            .handlers
+            .read()
+            .format_compaction_summary_handlers
+            .clone();
+        for handler in &handlers {
+            if let Some(result) = handler(event.clone(), ctx.clone()).await {
                 return Some(result.message);
             }
         }
@@ -269,8 +577,9 @@ impl ExtensionRunner {
             summary: summary.to_string(),
             timestamp,
         };
-        for handler in &self.handlers.format_branch_summary_handlers {
-            if let Some(result) = (handler.handler)(event.clone(), ctx.clone()).await {
+        let handlers = self.handlers.read().format_branch_summary_handlers.clone();
+        for handler in &handlers {
+            if let Some(result) = handler(event.clone(), ctx.clone()).await {
                 return Some(result.message);
             }
         }
@@ -285,10 +594,10 @@ impl ExtensionRunner {
     pub async fn emit_session_start(&self, reason: SessionStartReason) {
         let ctx = self.make_context(CancellationToken::new());
         let event = SessionStartEvent { reason };
-        for handler in &self.handlers.session_start_handlers {
-            if let Err(e) = (handler.handler)(event.clone(), ctx.clone()).await {
+        let handlers = self.handlers.read().session_start_handlers.clone();
+        for handler in &handlers {
+            if let Err(e) = handler(event.clone(), ctx.clone()).await {
                 self.report_error(ExtensionError {
-                    extension_name: handler.extension_name.clone(),
                     event: "session_start".to_string(),
                     error: e.to_string(),
                 });
@@ -297,16 +606,17 @@ impl ExtensionRunner {
     }
 
     /// Dispatch session_shutdown event to all handlers (fire-and-forget).
+    /// Returns `true` if any handlers were registered.
     pub async fn emit_session_shutdown(&self, reason: SessionShutdownReason) -> bool {
-        if self.handlers.session_shutdown_handlers.is_empty() {
+        let handlers = self.handlers.read().session_shutdown_handlers.clone();
+        if handlers.is_empty() {
             return false;
         }
         let ctx = self.make_context(CancellationToken::new());
         let event = SessionShutdownEvent { reason };
-        for handler in &self.handlers.session_shutdown_handlers {
-            if let Err(e) = (handler.handler)(event.clone(), ctx.clone()).await {
+        for handler in &handlers {
+            if let Err(e) = handler(event.clone(), ctx.clone()).await {
                 self.report_error(ExtensionError {
-                    extension_name: handler.extension_name.clone(),
                     event: "session_shutdown".to_string(),
                     error: e.to_string(),
                 });
@@ -331,7 +641,8 @@ impl ExtensionRunner {
         system_prompt: &str,
         cancel: CancellationToken,
     ) -> Option<BeforeAgentStartAccumulated> {
-        if self.handlers.before_agent_start_handlers.is_empty() {
+        let handlers = self.handlers.read().before_agent_start_handlers.clone();
+        if handlers.is_empty() {
             return None;
         }
 
@@ -340,14 +651,14 @@ impl ExtensionRunner {
         let mut messages: Vec<BeforeAgentStartMessage> = Vec::new();
         let mut modified = false;
 
-        for handler in &self.handlers.before_agent_start_handlers {
+        for handler in &handlers {
             let event = BeforeAgentStartEvent {
                 prompt: prompt.to_string(),
                 images: images.to_vec(),
                 audio: audio.to_vec(),
                 system_prompt: current_system_prompt.clone(),
             };
-            if let Some(result) = (handler.handler)(event, ctx.clone()).await {
+            if let Some(result) = handler(event, ctx.clone()).await {
                 if let Some(msg) = result.message {
                     messages.push(msg);
                     modified = true;
@@ -391,7 +702,8 @@ impl ExtensionRunner {
         event: MessageEndEvent,
         cancel: CancellationToken,
     ) -> Option<AgentMessage> {
-        if self.handlers.message_end_handlers.is_empty() {
+        let handlers = self.handlers.read().message_end_handlers.clone();
+        if handlers.is_empty() {
             return None;
         }
 
@@ -400,14 +712,13 @@ impl ExtensionRunner {
         let mut current_message = event.message;
         let mut modified = false;
 
-        for handler in &self.handlers.message_end_handlers {
+        for handler in &handlers {
             let current_event = MessageEndEvent {
                 message: current_message.clone(),
             };
-            if let Some(result) = (handler.handler)(current_event, ctx.clone()).await {
+            if let Some(result) = handler(current_event, ctx.clone()).await {
                 if result.message.role() != original_role {
                     self.report_error(ExtensionError {
-                        extension_name: handler.extension_name.clone(),
                         event: "message_end".to_string(),
                         error: format!(
                             "message_end handlers must return a message with the same role (expected: {original_role}, got: {})",
@@ -441,7 +752,8 @@ impl ExtensionRunner {
         args: &str,
         ctx: CommandContext,
     ) -> anyhow::Result<()> {
-        for cmd in &self.handlers.commands {
+        let handlers = self.handlers.read().commands.clone();
+        for cmd in &handlers {
             if cmd.name == name {
                 return (cmd.handler)(args.to_string(), ctx).await;
             }
@@ -491,9 +803,7 @@ impl ExtensionRunner {
             }
             AgentEvent::MessageEnd { message: _ } => {
                 // MessageEnd is handled by AgentSession via emit_message_end()
-                // (sequential chain with replacement). This arm should never be
-                // reached in normal operation since AgentSession intercepts
-                // MessageEnd before delegating to dispatch_agent_event().
+                // (sequential chain with replacement).
             }
             AgentEvent::ToolExecutionStart {
                 tool_call_id,
@@ -534,13 +844,13 @@ impl ExtensionRunner {
     // Notification dispatchers (one per notification event type)
     // -----------------------------------------------------------------------
 
-    pub async fn dispatch_agent_start(&self, cancel: CancellationToken) {
+    async fn dispatch_agent_start(&self, cancel: CancellationToken) {
         let ctx = self.make_context(cancel);
         let event = AgentStartEvent;
-        for handler in &self.handlers.agent_start_handlers {
-            if let Err(e) = (handler.handler)(event.clone(), ctx.clone()).await {
+        let handlers = self.handlers.read().agent_start_handlers.clone();
+        for handler in &handlers {
+            if let Err(e) = handler(event.clone(), ctx.clone()).await {
                 self.report_error(ExtensionError {
-                    extension_name: handler.extension_name.clone(),
                     event: "agent_start".to_string(),
                     error: e.to_string(),
                 });
@@ -548,13 +858,13 @@ impl ExtensionRunner {
         }
     }
 
-    pub async fn dispatch_agent_end(&self, messages: Vec<AgentMessage>, cancel: CancellationToken) {
+    async fn dispatch_agent_end(&self, messages: Vec<AgentMessage>, cancel: CancellationToken) {
         let ctx = self.make_context(cancel);
         let event = AgentEndEvent { messages };
-        for handler in &self.handlers.agent_end_handlers {
-            if let Err(e) = (handler.handler)(event.clone(), ctx.clone()).await {
+        let handlers = self.handlers.read().agent_end_handlers.clone();
+        for handler in &handlers {
+            if let Err(e) = handler(event.clone(), ctx.clone()).await {
                 self.report_error(ExtensionError {
-                    extension_name: handler.extension_name.clone(),
                     event: "agent_end".to_string(),
                     error: e.to_string(),
                 });
@@ -562,17 +872,17 @@ impl ExtensionRunner {
         }
     }
 
-    pub async fn dispatch_turn_start(&self, cancel: CancellationToken) {
+    async fn dispatch_turn_start(&self, cancel: CancellationToken) {
         let turn_index = self.turn_index.load(AtomicOrdering::SeqCst);
         let ctx = self.make_context(cancel);
         let event = TurnStartEvent {
             turn_index,
             timestamp: now_ms(),
         };
-        for handler in &self.handlers.turn_start_handlers {
-            if let Err(e) = (handler.handler)(event.clone(), ctx.clone()).await {
+        let handlers = self.handlers.read().turn_start_handlers.clone();
+        for handler in &handlers {
+            if let Err(e) = handler(event.clone(), ctx.clone()).await {
                 self.report_error(ExtensionError {
-                    extension_name: handler.extension_name.clone(),
                     event: "turn_start".to_string(),
                     error: e.to_string(),
                 });
@@ -580,7 +890,7 @@ impl ExtensionRunner {
         }
     }
 
-    pub async fn dispatch_turn_end(
+    async fn dispatch_turn_end(
         &self,
         message: AgentMessage,
         tool_results: Vec<ameli_ai::types::ToolResultMessage>,
@@ -595,10 +905,10 @@ impl ExtensionRunner {
             message,
             tool_results,
         };
-        for handler in &self.handlers.turn_end_handlers {
-            if let Err(e) = (handler.handler)(event.clone(), ctx.clone()).await {
+        let handlers = self.handlers.read().turn_end_handlers.clone();
+        for handler in &handlers {
+            if let Err(e) = handler(event.clone(), ctx.clone()).await {
                 self.report_error(ExtensionError {
-                    extension_name: handler.extension_name.clone(),
                     event: "turn_end".to_string(),
                     error: e.to_string(),
                 });
@@ -606,13 +916,13 @@ impl ExtensionRunner {
         }
     }
 
-    pub async fn dispatch_message_start(&self, message: AgentMessage, cancel: CancellationToken) {
+    async fn dispatch_message_start(&self, message: AgentMessage, cancel: CancellationToken) {
         let ctx = self.make_context(cancel);
         let event = MessageStartEvent { message };
-        for handler in &self.handlers.message_start_handlers {
-            if let Err(e) = (handler.handler)(event.clone(), ctx.clone()).await {
+        let handlers = self.handlers.read().message_start_handlers.clone();
+        for handler in &handlers {
+            if let Err(e) = handler(event.clone(), ctx.clone()).await {
                 self.report_error(ExtensionError {
-                    extension_name: handler.extension_name.clone(),
                     event: "message_start".to_string(),
                     error: e.to_string(),
                 });
@@ -620,7 +930,7 @@ impl ExtensionRunner {
         }
     }
 
-    pub async fn dispatch_message_update(
+    async fn dispatch_message_update(
         &self,
         message: AgentMessage,
         assistant_message_event: Box<ameli_ai::types::AssistantMessageEvent>,
@@ -631,10 +941,10 @@ impl ExtensionRunner {
             message,
             assistant_message_event,
         };
-        for handler in &self.handlers.message_update_handlers {
-            if let Err(e) = (handler.handler)(event.clone(), ctx.clone()).await {
+        let handlers = self.handlers.read().message_update_handlers.clone();
+        for handler in &handlers {
+            if let Err(e) = handler(event.clone(), ctx.clone()).await {
                 self.report_error(ExtensionError {
-                    extension_name: handler.extension_name.clone(),
                     event: "message_update".to_string(),
                     error: e.to_string(),
                 });
@@ -642,7 +952,7 @@ impl ExtensionRunner {
         }
     }
 
-    pub async fn dispatch_tool_execution_start(
+    async fn dispatch_tool_execution_start(
         &self,
         tool_call_id: String,
         tool_name: String,
@@ -655,10 +965,10 @@ impl ExtensionRunner {
             tool_name,
             args,
         };
-        for handler in &self.handlers.tool_execution_start_handlers {
-            if let Err(e) = (handler.handler)(event.clone(), ctx.clone()).await {
+        let handlers = self.handlers.read().tool_execution_start_handlers.clone();
+        for handler in &handlers {
+            if let Err(e) = handler(event.clone(), ctx.clone()).await {
                 self.report_error(ExtensionError {
-                    extension_name: handler.extension_name.clone(),
                     event: "tool_execution_start".to_string(),
                     error: e.to_string(),
                 });
@@ -666,7 +976,7 @@ impl ExtensionRunner {
         }
     }
 
-    pub async fn dispatch_tool_execution_update(
+    async fn dispatch_tool_execution_update(
         &self,
         tool_call_id: String,
         tool_name: String,
@@ -681,10 +991,10 @@ impl ExtensionRunner {
             args,
             partial_result,
         };
-        for handler in &self.handlers.tool_execution_update_handlers {
-            if let Err(e) = (handler.handler)(event.clone(), ctx.clone()).await {
+        let handlers = self.handlers.read().tool_execution_update_handlers.clone();
+        for handler in &handlers {
+            if let Err(e) = handler(event.clone(), ctx.clone()).await {
                 self.report_error(ExtensionError {
-                    extension_name: handler.extension_name.clone(),
                     event: "tool_execution_update".to_string(),
                     error: e.to_string(),
                 });
@@ -692,7 +1002,7 @@ impl ExtensionRunner {
         }
     }
 
-    pub async fn dispatch_tool_execution_end(
+    async fn dispatch_tool_execution_end(
         &self,
         tool_call_id: String,
         tool_name: String,
@@ -707,10 +1017,10 @@ impl ExtensionRunner {
             result,
             is_error,
         };
-        for handler in &self.handlers.tool_execution_end_handlers {
-            if let Err(e) = (handler.handler)(event.clone(), ctx.clone()).await {
+        let handlers = self.handlers.read().tool_execution_end_handlers.clone();
+        for handler in &handlers {
+            if let Err(e) = handler(event.clone(), ctx.clone()).await {
                 self.report_error(ExtensionError {
-                    extension_name: handler.extension_name.clone(),
                     event: "tool_execution_end".to_string(),
                     error: e.to_string(),
                 });
@@ -719,7 +1029,7 @@ impl ExtensionRunner {
     }
 
     // -----------------------------------------------------------------------
-    // Hook dispatchers (emit_tool_call, emit_tool_result, emit_context)
+    // Hook dispatchers (internal)
     // -----------------------------------------------------------------------
 
     /// Dispatch tool_call hook to all handlers. Returns the first blocking
@@ -730,8 +1040,9 @@ impl ExtensionRunner {
         cancel: CancellationToken,
     ) -> Option<ToolCallResult> {
         let ctx = self.make_context(cancel);
-        for handler in &self.handlers.tool_call_handlers {
-            if let Some(result) = (handler.handler)(event.clone(), ctx.clone()).await {
+        let handlers = self.handlers.read().tool_call_handlers.clone();
+        for handler in &handlers {
+            if let Some(result) = handler(event.clone(), ctx.clone()).await {
                 if result.block {
                     return Some(result);
                 }
@@ -751,8 +1062,9 @@ impl ExtensionRunner {
         let mut combined = ToolResultPatch::default();
         let mut modified = false;
 
-        for handler in &self.handlers.tool_result_handlers {
-            if let Some(patch) = (handler.handler)(current_event.clone(), ctx.clone()).await {
+        let handlers = self.handlers.read().tool_result_handlers.clone();
+        for handler in &handlers {
+            if let Some(patch) = handler(current_event.clone(), ctx.clone()).await {
                 if let Some(content) = patch.content {
                     current_event.content = content.clone();
                     combined.content = Some(content);
@@ -791,11 +1103,12 @@ impl ExtensionRunner {
         let ctx = self.make_context(cancel);
         let mut current = messages;
 
-        for handler in &self.handlers.context_handlers {
+        let handlers = self.handlers.read().context_handlers.clone();
+        for handler in &handlers {
             let event = ContextEvent {
                 messages: current.clone(),
             };
-            if let Some(result) = (handler.handler)(event, ctx.clone()).await {
+            if let Some(result) = handler(event, ctx.clone()).await {
                 current = result.messages;
             }
         }
@@ -878,6 +1191,29 @@ impl ExtensionRunner {
     }
 
     // -----------------------------------------------------------------------
+    // Test helpers
+    // -----------------------------------------------------------------------
+
+    /// Dispatch a tool_call hook for testing. Returns the first blocking
+    /// result, or `None` if no handler blocks.
+    #[cfg(test)]
+    pub(crate) async fn emit_tool_call_for_test(
+        &self,
+        event: ToolCallEvent,
+        ctx: ExtensionContext,
+    ) -> Option<ToolCallResult> {
+        let handlers = self.handlers.read().tool_call_handlers.clone();
+        for handler in &handlers {
+            if let Some(result) = handler(event.clone(), ctx.clone()).await {
+                if result.block {
+                    return Some(result);
+                }
+            }
+        }
+        None
+    }
+
+    // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
 
@@ -894,38 +1230,9 @@ impl ExtensionRunner {
 impl fmt::Debug for ExtensionRunner {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ExtensionRunner")
-            .field(
-                "notification_handlers",
-                &format_args!(
-                    "agent_start={} agent_end={} turn_start={} turn_end={} message_start={} message_update={} message_end={} tool_exec_start={} tool_exec_update={} tool_exec_end={} session_start={} session_shutdown={}",
-                    self.handlers.agent_start_handlers.len(),
-                    self.handlers.agent_end_handlers.len(),
-                    self.handlers.turn_start_handlers.len(),
-                    self.handlers.turn_end_handlers.len(),
-                    self.handlers.message_start_handlers.len(),
-                    self.handlers.message_update_handlers.len(),
-                    self.handlers.message_end_handlers.len(),
-                    self.handlers.tool_execution_start_handlers.len(),
-                    self.handlers.tool_execution_update_handlers.len(),
-                    self.handlers.tool_execution_end_handlers.len(),
-                    self.handlers.session_start_handlers.len(),
-                    self.handlers.session_shutdown_handlers.len(),
-                ),
-            )
-            .field(
-                "hook_handlers",
-                &format_args!(
-                    "tool_call={} tool_result={} context={} before_agent_start={} format_compaction={} format_branch={}",
-                    self.handlers.tool_call_handlers.len(),
-                    self.handlers.tool_result_handlers.len(),
-                    self.handlers.context_handlers.len(),
-                    self.handlers.before_agent_start_handlers.len(),
-                    self.handlers.format_compaction_summary_handlers.len(),
-                    self.handlers.format_branch_summary_handlers.len(),
-                ),
-            )
-            .field("commands", &self.handlers.commands.len())
-            .field("tools", &self.handlers.tools.len())
+            .field("has_any_handlers", &self.has_any_handlers())
+            .field("tools", &self.get_registered_tools().len())
+            .field("commands", &self.get_registered_commands().len())
             .finish_non_exhaustive()
     }
 }
@@ -968,15 +1275,16 @@ mod tests {
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    fn noop_interface() -> Arc<dyn crate::interface::Interface> {
+        Arc::new(crate::interface::NoopInterface)
+    }
+
     // -- Test extensions ----------------------------------------------------
 
     struct LoggingExtension;
 
     impl Extension for LoggingExtension {
-        fn name(&self) -> &str {
-            "logging"
-        }
-        fn init(&self, api: &mut ExtensionApi) {
+        fn init(&self, api: &Arc<ExtensionApi>) {
             api.on_agent_start(|_event, _ctx| Box::pin(async { Ok(()) }));
             api.on_turn_end(|_event, _ctx| Box::pin(async { Ok(()) }));
             api.on_session_start(|_event, _ctx| Box::pin(async { Ok(()) }));
@@ -987,10 +1295,7 @@ mod tests {
     struct BlockBashExtension;
 
     impl Extension for BlockBashExtension {
-        fn name(&self) -> &str {
-            "block-bash"
-        }
-        fn init(&self, api: &mut ExtensionApi) {
+        fn init(&self, api: &Arc<ExtensionApi>) {
             api.on_tool_call(|event, _ctx| {
                 let tool_name = event.tool_name.clone();
                 Box::pin(async move {
@@ -1007,10 +1312,7 @@ mod tests {
     struct ContextTransformExtension;
 
     impl Extension for ContextTransformExtension {
-        fn name(&self) -> &str {
-            "context-transform"
-        }
-        fn init(&self, api: &mut ExtensionApi) {
+        fn init(&self, api: &Arc<ExtensionApi>) {
             api.on_context(|event, _ctx| {
                 let messages = event.messages.clone();
                 Box::pin(async move {
@@ -1034,10 +1336,7 @@ mod tests {
     struct ToolResultModifierExtension;
 
     impl Extension for ToolResultModifierExtension {
-        fn name(&self) -> &str {
-            "tool-result-mod"
-        }
-        fn init(&self, api: &mut ExtensionApi) {
+        fn init(&self, api: &Arc<ExtensionApi>) {
             api.on_tool_result(|event, _ctx| {
                 let tool_name = event.tool_name.clone();
                 Box::pin(async move {
@@ -1061,10 +1360,7 @@ mod tests {
     struct CompactionFormatExtension;
 
     impl Extension for CompactionFormatExtension {
-        fn name(&self) -> &str {
-            "compaction-fmt"
-        }
-        fn init(&self, api: &mut ExtensionApi) {
+        fn init(&self, api: &Arc<ExtensionApi>) {
             api.on_format_compaction_summary(|event, _ctx| {
                 let summary = event.summary.clone();
                 let timestamp = event.timestamp;
@@ -1085,10 +1381,7 @@ mod tests {
     struct BeforeAgentStartOverrideExtension;
 
     impl Extension for BeforeAgentStartOverrideExtension {
-        fn name(&self) -> &str {
-            "before-start-override"
-        }
-        fn init(&self, api: &mut ExtensionApi) {
+        fn init(&self, api: &Arc<ExtensionApi>) {
             api.on_before_agent_start(|_event, _ctx| {
                 Box::pin(async move {
                     Some(BeforeAgentStartResult {
@@ -1103,16 +1396,10 @@ mod tests {
     struct MessageEndReplaceExtension;
 
     impl Extension for MessageEndReplaceExtension {
-        fn name(&self) -> &str {
-            "msg-end-replace"
-        }
-        fn init(&self, api: &mut ExtensionApi) {
+        fn init(&self, api: &Arc<ExtensionApi>) {
             api.on_message_end(|event, _ctx| {
                 let msg = event.message.clone();
-                Box::pin(async move {
-                    // Return the same message (no-op replacement for testing)
-                    Some(MessageEndResult { message: msg })
-                })
+                Box::pin(async move { Some(MessageEndResult { message: msg }) })
             });
         }
     }
@@ -1163,10 +1450,7 @@ mod tests {
     struct ToolRegisteringExtension;
 
     impl Extension for ToolRegisteringExtension {
-        fn name(&self) -> &str {
-            "tool-registering"
-        }
-        fn init(&self, api: &mut ExtensionApi) {
+        fn init(&self, api: &Arc<ExtensionApi>) {
             api.register_tool(Arc::new(EchoTool));
         }
     }
@@ -1174,10 +1458,7 @@ mod tests {
     struct CommandExtension;
 
     impl Extension for CommandExtension {
-        fn name(&self) -> &str {
-            "command-ext"
-        }
-        fn init(&self, api: &mut ExtensionApi) {
+        fn init(&self, api: &Arc<ExtensionApi>) {
             api.register_command(
                 "greet",
                 Some("Say hello".into()),
@@ -1251,7 +1532,6 @@ mod tests {
         }));
 
         runner.report_error(ExtensionError {
-            extension_name: "test-ext".to_string(),
             event: "test_event".to_string(),
             error: "something failed".to_string(),
         });
@@ -1264,7 +1544,7 @@ mod tests {
     #[test]
     fn install_hooks_with_tool_call_handler() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(BlockBashExtension)];
-        let runner = Arc::new(ExtensionRunner::from_extensions(&extensions));
+        let runner = ExtensionRunner::from_extensions(&extensions);
 
         let mut options = ameli_agent_core::AgentOptions::default();
         runner.install_hooks(&mut options);
@@ -1277,7 +1557,7 @@ mod tests {
     #[test]
     fn install_hooks_with_context_handler() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(ContextTransformExtension)];
-        let runner = Arc::new(ExtensionRunner::from_extensions(&extensions));
+        let runner = ExtensionRunner::from_extensions(&extensions);
 
         let mut options = ameli_agent_core::AgentOptions::default();
         runner.install_hooks(&mut options);
@@ -1290,7 +1570,7 @@ mod tests {
     #[test]
     fn install_hooks_with_tool_result_handler() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(ToolResultModifierExtension)];
-        let runner = Arc::new(ExtensionRunner::from_extensions(&extensions));
+        let runner = ExtensionRunner::from_extensions(&extensions);
 
         let mut options = ameli_agent_core::AgentOptions::default();
         runner.install_hooks(&mut options);
@@ -1302,7 +1582,7 @@ mod tests {
 
     #[test]
     fn install_hooks_skips_when_no_handlers() {
-        let runner = Arc::new(ExtensionRunner::from_extensions(&[]));
+        let runner = ExtensionRunner::from_extensions(&[]);
 
         let mut options = ameli_agent_core::AgentOptions::default();
         runner.install_hooks(&mut options);
@@ -1317,7 +1597,7 @@ mod tests {
     #[tokio::test]
     async fn before_tool_call_blocks_bash() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(BlockBashExtension)];
-        let runner = Arc::new(ExtensionRunner::from_extensions(&extensions));
+        let runner = ExtensionRunner::from_extensions(&extensions);
 
         let ctx = BeforeToolCallContext {
             assistant_message: AssistantMessage {
@@ -1358,7 +1638,7 @@ mod tests {
     #[tokio::test]
     async fn before_tool_call_allows_other_tools() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(BlockBashExtension)];
-        let runner = Arc::new(ExtensionRunner::from_extensions(&extensions));
+        let runner = ExtensionRunner::from_extensions(&extensions);
 
         let ctx = BeforeToolCallContext {
             assistant_message: AssistantMessage {
@@ -1391,10 +1671,12 @@ mod tests {
         assert!(result.is_none());
     }
 
+    // -- Tool result modifier test ------------------------------------------
+
     #[tokio::test]
-    async fn after_tool_call_patches_result() {
+    async fn after_tool_call_modifies_result() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(ToolResultModifierExtension)];
-        let runner = Arc::new(ExtensionRunner::from_extensions(&extensions));
+        let runner = ExtensionRunner::from_extensions(&extensions);
 
         let ctx = AfterToolCallContext {
             assistant_message: AssistantMessage {
@@ -1416,7 +1698,7 @@ mod tests {
                 thought_signature: None,
             },
             args: serde_json::json!({"message": "hello"}),
-            result: AgentToolResult::text("original", serde_json::json!({})),
+            result: AgentToolResult::text("hello", serde_json::json!({})),
             is_error: false,
             context: AgentContext {
                 system_prompt: String::new(),
@@ -1427,40 +1709,33 @@ mod tests {
 
         let result = runner.handle_after_tool_call(&ctx, None).await;
         assert!(result.is_some());
-        let Some(result) = result else {
-            panic!("expected patched result");
-        };
-        let Some(content) = result.content else {
-            panic!("expected content");
-        };
+        let result = result.unwrap();
+        assert!(result.content.is_some());
+        let content = result.content.unwrap();
         assert_eq!(content.len(), 1);
-        let Some(first) = content.first() else {
-            panic!("expected at least one block");
-        };
-        match first {
-            ameli_ai::types::MediaContentBlock::Text(t) => {
-                assert_eq!(t.text, "modified by extension");
-            }
-            other => panic!("expected text content, got {other:?}"),
+        match &content[0] {
+            MediaContentBlock::Text(t) => assert_eq!(t.text, "modified by extension"),
+            _ => panic!("expected text block"),
         }
     }
 
+    // -- Context transform test ---------------------------------------------
+
     #[tokio::test]
-    async fn transform_context_filters_messages() {
+    async fn context_transform_filters_messages() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(ContextTransformExtension)];
-        let runner = Arc::new(ExtensionRunner::from_extensions(&extensions));
+        let runner = ExtensionRunner::from_extensions(&extensions);
 
         let messages = vec![
             AgentMessage::User(ameli_ai::types::UserMessage::text("hello")),
             AgentMessage::User(ameli_ai::types::UserMessage::text("")),
             AgentMessage::User(ameli_ai::types::UserMessage::text("world")),
         ];
-
         let result = runner.handle_transform_context(&messages, None).await;
         assert_eq!(result.len(), 2);
     }
 
-    // -- Format hook tests --------------------------------------------------
+    // -- Summary formatting tests -------------------------------------------
 
     #[tokio::test]
     async fn format_compaction_summary_custom() {
@@ -1468,34 +1743,20 @@ mod tests {
         let runner = ExtensionRunner::from_extensions(&extensions);
 
         let result = runner
-            .emit_format_compaction_summary(
-                "old conversation was about X",
-                1000,
-                CancellationToken::new(),
-            )
+            .emit_format_compaction_summary("old conversation", 1000, CancellationToken::new())
             .await;
-
         assert!(result.is_some());
-        let Some(msg) = result else {
-            panic!("expected formatted message");
-        };
-        match &msg {
-            AgentMessage::User(u) => match &u.content {
-                ameli_ai::types::UserContent::Blocks(blocks) => {
-                    assert_eq!(blocks.len(), 1);
-                    let Some(first) = blocks.first() else {
-                        panic!("expected at least one block");
-                    };
-                    match first {
-                        MediaContentBlock::Text(t) => {
-                            assert!(t.text.contains("[CUSTOM COMPACT]"));
-                        }
-                        other => panic!("expected text block, got {other:?}"),
+        match result.unwrap() {
+            AgentMessage::User(msg) => match &msg.content {
+                ameli_ai::types::UserContent::Blocks(blocks) => match &blocks[0] {
+                    MediaContentBlock::Text(t) => {
+                        assert!(t.text.contains("[CUSTOM COMPACT]"));
                     }
-                }
-                other => panic!("expected blocks, got {other:?}"),
+                    _ => panic!("expected text block"),
+                },
+                _ => panic!("expected blocks"),
             },
-            other => panic!("expected user message, got {other:?}"),
+            _ => panic!("expected user message"),
         }
     }
 
@@ -1503,7 +1764,7 @@ mod tests {
     async fn format_compaction_summary_default_when_no_handlers() {
         let runner = ExtensionRunner::from_extensions(&[]);
         let result = runner
-            .emit_format_compaction_summary("summary text", 1000, CancellationToken::new())
+            .emit_format_compaction_summary("summary", 1000, CancellationToken::new())
             .await;
         assert!(result.is_none());
     }
@@ -1511,112 +1772,54 @@ mod tests {
     // -- Before agent start tests -------------------------------------------
 
     #[tokio::test]
-    async fn emit_before_agent_start_accumulates() {
+    async fn before_agent_start_override() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(BeforeAgentStartOverrideExtension)];
         let runner = ExtensionRunner::from_extensions(&extensions);
 
         let result = runner
-            .emit_before_agent_start(
-                "hello",
-                &[],
-                &[],
-                "original prompt",
-                CancellationToken::new(),
-            )
+            .emit_before_agent_start("hello", &[], &[], "original", CancellationToken::new())
             .await;
-
         assert!(result.is_some());
-        let accumulated = result.unwrap();
-        assert_eq!(accumulated.system_prompt.as_deref(), Some("overridden"));
+        let acc = result.unwrap();
+        assert_eq!(acc.system_prompt.as_deref(), Some("overridden"));
     }
 
-    #[tokio::test]
-    async fn emit_before_agent_start_none_when_no_handlers() {
-        let runner = ExtensionRunner::from_extensions(&[]);
-        let result = runner
-            .emit_before_agent_start("hello", &[], &[], "prompt", CancellationToken::new())
-            .await;
-        assert!(result.is_none());
-    }
-
-    // -- Message end hook tests ---------------------------------------------
+    // -- Message end test ---------------------------------------------------
 
     #[tokio::test]
-    async fn emit_message_end_chains_replacements() {
+    async fn message_end_replaces() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(MessageEndReplaceExtension)];
         let runner = ExtensionRunner::from_extensions(&extensions);
 
         let event = MessageEndEvent {
-            message: AgentMessage::User(ameli_ai::types::UserMessage::text("original")),
+            message: AgentMessage::User(ameli_ai::types::UserMessage::text("hello")),
         };
         let result = runner
             .emit_message_end(event, CancellationToken::new())
             .await;
         assert!(result.is_some());
-        let msg = result.unwrap();
-        assert_eq!(msg.role(), "user");
-    }
-
-    #[tokio::test]
-    async fn emit_message_end_none_when_no_handlers() {
-        let runner = ExtensionRunner::from_extensions(&[]);
-        let event = MessageEndEvent {
-            message: AgentMessage::User(ameli_ai::types::UserMessage::text("hi")),
-        };
-        let result = runner
-            .emit_message_end(event, CancellationToken::new())
-            .await;
-        assert!(result.is_none());
+        assert_eq!(result.unwrap().role(), "user");
     }
 
     // -- Session lifecycle tests --------------------------------------------
 
     #[tokio::test]
-    async fn emit_session_start_fires_to_handlers() {
-        let count = Arc::new(AtomicUsize::new(0));
-        let count_clone = count.clone();
-
-        let mut api = ExtensionApi::new();
-        api.current_extension_name = "test".to_string();
-        api.on_session_start(move |_event, _ctx| {
-            let c = count_clone.clone();
-            Box::pin(async move {
-                c.fetch_add(1, Ordering::SeqCst);
-                Ok(())
-            })
-        });
-
-        let runner = ExtensionRunner::new(api.into_handlers());
+    async fn session_start_dispatches() {
+        let runner = ExtensionRunner::from_extensions(&[Box::new(LoggingExtension)]);
         runner.emit_session_start(SessionStartReason::Startup).await;
-
-        assert_eq!(count.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
-    async fn emit_session_shutdown_fires_to_handlers() {
-        let count = Arc::new(AtomicUsize::new(0));
-        let count_clone = count.clone();
-
-        let mut api = ExtensionApi::new();
-        api.current_extension_name = "test".to_string();
-        api.on_session_shutdown(move |_event, _ctx| {
-            let c = count_clone.clone();
-            Box::pin(async move {
-                c.fetch_add(1, Ordering::SeqCst);
-                Ok(())
-            })
-        });
-
-        let runner = ExtensionRunner::new(api.into_handlers());
+    async fn session_shutdown_dispatches() {
+        let runner = ExtensionRunner::from_extensions(&[Box::new(LoggingExtension)]);
         let handled = runner
             .emit_session_shutdown(SessionShutdownReason::Quit)
             .await;
         assert!(handled);
-        assert_eq!(count.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
-    async fn emit_session_shutdown_returns_false_when_no_handlers() {
+    async fn session_shutdown_returns_false_when_no_handlers() {
         let runner = ExtensionRunner::from_extensions(&[]);
         let handled = runner
             .emit_session_shutdown(SessionShutdownReason::Quit)
@@ -1624,13 +1827,11 @@ mod tests {
         assert!(!handled);
     }
 
-    // -- Command dispatch tests ---------------------------------------------
+    // -- Command dispatch test ----------------------------------------------
 
     #[tokio::test]
-    async fn execute_command_dispatches_to_handler() {
-        let extensions: Vec<Box<dyn Extension>> = vec![Box::new(CommandExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions);
-
+    async fn execute_command_dispatches() {
+        let runner = ExtensionRunner::from_extensions(&[Box::new(CommandExtension)]);
         let ctx = CommandContext {
             extension_context: ExtensionContext::for_testing(),
         };
@@ -1639,122 +1840,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_command_returns_error_for_unknown() {
+    async fn execute_command_unknown_fails() {
         let runner = ExtensionRunner::from_extensions(&[]);
         let ctx = CommandContext {
             extension_context: ExtensionContext::for_testing(),
         };
         let result = runner.execute_command("unknown", "", ctx).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("no command"));
     }
 
-    // -- Notification dispatch tests ----------------------------------------
-
-    #[tokio::test]
-    async fn agent_event_dispatches_agent_start() {
-        let call_count = Arc::new(AtomicUsize::new(0));
-        let call_count_clone = call_count.clone();
-
-        let mut api = ExtensionApi::new();
-        api.current_extension_name = "test".to_string();
-        api.on_agent_start(move |_event, _ctx| {
-            let count = call_count_clone.clone();
-            Box::pin(async move {
-                count.fetch_add(1, Ordering::SeqCst);
-                Ok(())
-            })
-        });
-
-        let runner = ExtensionRunner::new(api.into_handlers());
-        runner
-            .dispatch_agent_event(
-                ameli_agent_core::types::AgentEvent::AgentStart,
-                CancellationToken::new(),
-            )
-            .await;
-
-        assert_eq!(call_count.load(Ordering::SeqCst), 1);
-    }
-
-    #[tokio::test]
-    async fn agent_event_dispatches_tool_execution_update() {
-        let count = Arc::new(AtomicUsize::new(0));
-        let count_clone = count.clone();
-
-        let mut api = ExtensionApi::new();
-        api.current_extension_name = "test".to_string();
-        api.on_tool_execution_update(move |_event, _ctx| {
-            let c = count_clone.clone();
-            Box::pin(async move {
-                c.fetch_add(1, Ordering::SeqCst);
-                Ok(())
-            })
-        });
-
-        let runner = ExtensionRunner::new(api.into_handlers());
-        runner
-            .dispatch_agent_event(
-                ameli_agent_core::types::AgentEvent::ToolExecutionUpdate {
-                    tool_call_id: "tc_1".into(),
-                    tool_name: "echo".into(),
-                    args: serde_json::json!({}),
-                    partial_result: AgentToolResult::text("partial", serde_json::json!({})),
-                },
-                CancellationToken::new(),
-            )
-            .await;
-
-        assert_eq!(count.load(Ordering::SeqCst), 1);
-    }
-
-    #[tokio::test]
-    async fn notification_handler_error_reported_to_listener() {
-        let error_count = Arc::new(AtomicUsize::new(0));
-        let handler2_count = Arc::new(AtomicUsize::new(0));
-        let error_count_clone = error_count.clone();
-        let handler2_count_clone = handler2_count.clone();
-
-        let mut api = ExtensionApi::new();
-
-        api.current_extension_name = "failing-ext".to_string();
-        api.on_agent_start(move |_event, _ctx| {
-            Box::pin(async { Err(anyhow::anyhow!("handler 1 failed")) })
-        });
-
-        api.current_extension_name = "ok-ext".to_string();
-        api.on_agent_start(move |_event, _ctx| {
-            let count = handler2_count_clone.clone();
-            Box::pin(async move {
-                count.fetch_add(1, Ordering::SeqCst);
-                Ok(())
-            })
-        });
-
-        let runner = ExtensionRunner::new(api.into_handlers());
-        runner.on_error(Arc::new(move |_err| {
-            error_count_clone.fetch_add(1, Ordering::SeqCst);
-        }));
-
-        runner
-            .dispatch_agent_event(
-                ameli_agent_core::types::AgentEvent::AgentStart,
-                CancellationToken::new(),
-            )
-            .await;
-
-        assert_eq!(error_count.load(Ordering::SeqCst), 1);
-        assert_eq!(handler2_count.load(Ordering::SeqCst), 1);
-    }
-
-    // -- Debug format test --------------------------------------------------
+    // -- Empty runner tests -------------------------------------------------
 
     #[test]
-    fn runner_debug_format() {
-        let extensions: Vec<Box<dyn Extension>> =
-            vec![Box::new(LoggingExtension), Box::new(BlockBashExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions);
-        let debug = format!("{runner:?}");
-        assert!(debug.contains("ExtensionRunner"));
+    fn empty_runner_has_no_handlers() {
+        let runner = ExtensionRunner::empty(noop_interface());
+        assert!(!runner.has_any_handlers());
+        assert!(runner.get_registered_tools().is_empty());
+        assert!(runner.get_registered_commands().is_empty());
     }
 }

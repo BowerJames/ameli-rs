@@ -339,11 +339,7 @@ impl TodoExtension {
 }
 
 impl Extension for TodoExtension {
-    fn name(&self) -> &str {
-        "todo-extension"
-    }
-
-    fn init(&self, api: &mut ExtensionApi) {
+    fn init(&self, api: &Arc<ExtensionApi>) {
         let todos = self.todos.clone();
 
         // --- Hook: before_agent_start ---

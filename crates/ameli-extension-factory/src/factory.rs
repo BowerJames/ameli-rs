@@ -302,10 +302,7 @@ mod tests {
     struct NoOpExtension;
 
     impl Extension for NoOpExtension {
-        fn name(&self) -> &str {
-            "noop"
-        }
-        fn init(&self, _api: &mut ExtensionApi) {}
+        fn init(&self, _api: &std::sync::Arc<ExtensionApi>) {}
     }
 
     /// A template that requires a "message" field.
@@ -386,7 +383,8 @@ mod tests {
         let ext = factory
             .build("noop", &serde_json::json!({"enabled": true}))
             .unwrap();
-        assert_eq!(ext.name(), "noop");
+        // Extension built successfully
+        let _ = ext;
     }
 
     #[test]
@@ -395,7 +393,8 @@ mod tests {
         factory.register(Box::new(NoOpTemplate));
 
         let ext = factory.build("noop", &serde_json::json!({})).unwrap();
-        assert_eq!(ext.name(), "noop");
+        // Extension built successfully
+        let _ = ext;
     }
 
     // -- Template not found -------------------------------------------------
@@ -504,7 +503,8 @@ mod tests {
         factory.register(Box::new(NoOpV2));
         assert_eq!(factory.template_names().len(), 1);
         let ext = factory.build("noop", &serde_json::json!({})).unwrap();
-        assert_eq!(ext.name(), "noop");
+        // Extension built successfully
+        let _ = ext;
     }
 
     // -- Unregister ---------------------------------------------------------

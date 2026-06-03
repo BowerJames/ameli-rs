@@ -50,7 +50,8 @@
 
 use crate::auth_storage::AuthStorage;
 use crate::error::CreateAgentSessionError;
-use crate::extension::{init_extensions, Extension, ExtensionContext, ExtensionRunner};
+use crate::extension::{init_extensions, Extension};
+use crate::extension::{ExtensionContext, ExtensionRunner};
 use crate::interface::Interface;
 use crate::session_manager::{
     CustomMessageContent, ModelRef, SessionContext, SessionManager, SessionMessage, SessionMetadata,
@@ -694,11 +695,8 @@ pub async fn create_agent_session<M: SessionMetadata>(
         })?;
 
     // 3. Initialize extensions.
-    let handlers = init_extensions(&options.extensions);
-    let runner = Arc::new(ExtensionRunner::with_interface(
-        handlers,
-        options.interface.clone(),
-    ));
+    let runner = Arc::new(ExtensionRunner::empty(options.interface.clone()));
+    init_extensions(&options.extensions, &runner);
 
     // 4. Build AgentOptions.
     let thinking_level = options.thinking_level.unwrap_or(ThinkingLevel::Off);
@@ -820,17 +818,12 @@ mod tests {
     struct NoCommandsExtension;
 
     impl Extension for NoCommandsExtension {
-        fn name(&self) -> &str {
-            "no-commands"
-        }
-        fn init(&self, _api: &mut ExtensionApi) {}
+        fn init(&self, _api: &Arc<ExtensionApi>) {}
     }
 
     async fn test_session(agent: ArcAgent) -> AgentSession<InMemoryMetadata> {
         let session_manager = Arc::new(InMemorySessionManager::new());
-        let runner = Arc::new(ExtensionRunner::from_extensions(&[Box::new(
-            NoCommandsExtension,
-        )]));
+        let runner = ExtensionRunner::from_extensions(&[Box::new(NoCommandsExtension)]);
         AgentSession::new(AgentSessionConfig {
             agent,
             session_manager,
@@ -1099,7 +1092,7 @@ mod tests {
     #[tokio::test]
     async fn handle_agent_event_persists_message_end() {
         let sm: Arc<dyn SessionManager<InMemoryMetadata>> = Arc::new(InMemorySessionManager::new());
-        let runner = Arc::new(ExtensionRunner::from_extensions(&[]));
+        let runner = ExtensionRunner::from_extensions(&[]);
 
         let event = AgentEvent::MessageEnd {
             message: AgentMessage::User(ameli_ai::types::UserMessage::text("hello")),
@@ -1271,10 +1264,7 @@ mod tests {
     async fn create_agent_session_with_extensions() {
         struct TestExtension;
         impl Extension for TestExtension {
-            fn name(&self) -> &str {
-                "test-ext"
-            }
-            fn init(&self, _api: &mut ExtensionApi) {}
+            fn init(&self, _api: &Arc<ExtensionApi>) {}
         }
 
         let result = create_agent_session(CreateAgentSessionOptions {
