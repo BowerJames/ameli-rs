@@ -1843,6 +1843,106 @@ mod tests {
         assert!(result.is_err());
     }
 
+    // -- Error propagation during dispatch ---------------------------------
+
+    #[tokio::test]
+    async fn notification_handler_error_reported_to_listener_and_dispatch_continues() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let error_received = Arc::new(AtomicBool::new(false));
+        let second_handler_ran = Arc::new(AtomicBool::new(false));
+
+        struct FailingThenSucceedingExtension {
+            ran_flag: Arc<AtomicBool>,
+        }
+
+        impl Extension for FailingThenSucceedingExtension {
+            fn init(&self, api: &Arc<ExtensionApi>) {
+                let flag = self.ran_flag.clone();
+                // First handler: always fails
+                api.on_agent_start(|_event, _ctx| {
+                    Box::pin(async { Err(anyhow::anyhow!("handler failed")) })
+                });
+                // Second handler: succeeds and sets flag
+                api.on_agent_start(move |_event, _ctx| {
+                    let flag = flag.clone();
+                    Box::pin(async move {
+                        flag.store(true, Ordering::SeqCst);
+                        Ok(())
+                    })
+                });
+            }
+        }
+
+        let runner =
+            ExtensionRunner::from_extensions(&[Box::new(FailingThenSucceedingExtension {
+                ran_flag: second_handler_ran.clone(),
+            })]);
+
+        let error_flag = error_received.clone();
+        runner.on_error(Arc::new(move |err| {
+            assert_eq!(err.event, "agent_start");
+            assert!(err.error.contains("handler failed"));
+            error_flag.store(true, Ordering::SeqCst);
+        }));
+
+        runner
+            .dispatch_agent_event(
+                ameli_agent_core::types::AgentEvent::AgentStart,
+                CancellationToken::new(),
+            )
+            .await;
+
+        assert!(
+            error_received.load(Ordering::SeqCst),
+            "error listener should have been called"
+        );
+        assert!(
+            second_handler_ran.load(Ordering::SeqCst),
+            "second handler should still have run"
+        );
+    }
+
+    // -- dispatch_agent_event routing test -----------------------------------
+
+    #[tokio::test]
+    async fn dispatch_agent_event_routes_agent_start() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let call_count = Arc::new(AtomicUsize::new(0));
+
+        struct AgentStartCountingExtension {
+            count: Arc<AtomicUsize>,
+        }
+
+        impl Extension for AgentStartCountingExtension {
+            fn init(&self, api: &Arc<ExtensionApi>) {
+                let count = self.count.clone();
+                api.on_agent_start(move |_event, _ctx| {
+                    let count = count.clone();
+                    Box::pin(async move {
+                        count.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    })
+                });
+            }
+        }
+
+        let runner = ExtensionRunner::from_extensions(&[Box::new(AgentStartCountingExtension {
+            count: call_count.clone(),
+        })]);
+
+        // Dispatch via the public routing method, not the private dispatch_agent_start
+        runner
+            .dispatch_agent_event(
+                ameli_agent_core::types::AgentEvent::AgentStart,
+                CancellationToken::new(),
+            )
+            .await;
+
+        assert_eq!(call_count.load(Ordering::SeqCst), 1);
+    }
+
     // -- Empty runner tests -------------------------------------------------
 
     #[test]
