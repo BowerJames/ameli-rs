@@ -420,8 +420,6 @@ pub struct RegisteredCommand {
     pub name: String,
     /// Optional description for documentation/discovery.
     pub description: Option<String>,
-    /// Name of the extension that registered this command.
-    pub extension_name: String,
     /// Handler function.
     pub handler: Arc<CommandHandlerFn>,
 }
@@ -431,7 +429,6 @@ impl fmt::Debug for RegisteredCommand {
         f.debug_struct("RegisteredCommand")
             .field("name", &self.name)
             .field("description", &self.description)
-            .field("extension_name", &self.extension_name)
             .finish_non_exhaustive()
     }
 }
@@ -604,12 +601,10 @@ mod tests {
         let cmd = RegisteredCommand {
             name: "my-command".into(),
             description: Some("Does a thing".into()),
-            extension_name: "test-ext".into(),
             handler: Arc::new(|_args, _ctx| Box::pin(async { Ok(()) })),
         };
         let debug = format!("{cmd:?}");
         assert!(debug.contains("my-command"));
-        assert!(debug.contains("test-ext"));
     }
 
     #[test]

@@ -23,6 +23,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { version = "0.7", features = ["rt"] }
 tracing = { workspace = true }
+parking_lot = "0.12"
 
 [dev-dependencies]
 temp-env = "0.3"
