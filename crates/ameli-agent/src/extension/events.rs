@@ -311,10 +311,10 @@ pub struct BeforeAgentStartResult {
 /// A custom message produced by a `before_agent_start` handler.
 #[derive(Debug, Clone)]
 pub struct BeforeAgentStartMessage {
-    /// Custom type discriminator (e.g. `"context"`, `"rules"`).
+    /// Custom type discriminator (e.g. `"instruction"`, `"context"`).
     pub custom_type: String,
-    /// Message content (plain text or rich media blocks).
-    pub content: crate::session_manager::CustomMessageContent,
+    /// Arbitrary extension-specific data payload.
+    pub data: Option<serde_json::Value>,
     /// Whether this message should be visible in the UI.
     pub display: bool,
     /// Optional structured details for downstream consumption.

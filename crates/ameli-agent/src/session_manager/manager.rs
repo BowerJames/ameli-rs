@@ -14,7 +14,7 @@
 //! [`AgentSession`]: ameli_agent::AgentSession
 
 use super::error::SessionError;
-use super::types::{CustomMessageContent, SessionContext, SessionEntry};
+use super::types::{SessionContext, SessionEntry};
 use ameli_agent_core::types::AgentMessage;
 use std::future::Future;
 use std::pin::Pin;
@@ -167,7 +167,7 @@ pub trait SessionManager<M: SessionMetadata>: Send + Sync {
     fn append_custom_message_entry(
         &self,
         custom_type: &str,
-        content: CustomMessageContent,
+        data: Option<serde_json::Value>,
         display: bool,
         details: Option<serde_json::Value>,
     ) -> AsyncResult<String>;

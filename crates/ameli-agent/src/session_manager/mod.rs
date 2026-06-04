@@ -34,7 +34,7 @@ pub use error::SessionError;
 pub use in_memory::{InMemoryMetadata, InMemorySessionManager};
 pub use manager::{AsyncResult, BranchSummaryData, SessionManager, SessionMetadata};
 pub use types::{
-    BranchSummaryEntry, CompactionEntry, CustomEntry, CustomMessageContent, CustomMessageEntry,
-    MessageEntry, ModelChangeEntry, ModelRef, SessionContext, SessionEntry, SessionMessage,
+    BranchSummaryEntry, CompactionEntry, CustomEntry, CustomMessageEntry, MessageEntry,
+    ModelChangeEntry, ModelRef, SessionContext, SessionEntry, SessionMessage,
     ThinkingLevelChangeEntry,
 };

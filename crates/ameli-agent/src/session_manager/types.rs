@@ -6,7 +6,6 @@
 //! building, and the [`SessionContext`] produced by walking the tree.
 
 use ameli_agent_core::types::AgentMessage;
-use ameli_ai::types::MediaContentBlock;
 use std::fmt;
 
 // ---------------------------------------------------------------------------
@@ -69,23 +68,6 @@ pub struct SessionContext {
     pub thinking_level: String,
     /// Current model selection, if any has been recorded.
     pub model: Option<ModelRef>,
-}
-
-// ---------------------------------------------------------------------------
-// Custom Message Content
-// ---------------------------------------------------------------------------
-
-/// Content for a [`CustomMessageEntry`].
-///
-/// Extensions can inject either plain text or rich content (text + images)
-/// into the LLM context.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum CustomMessageContent {
-    /// Plain text content.
-    Text(String),
-    /// Rich content with text and/or image blocks.
-    Rich(Vec<MediaContentBlock>),
 }
 
 // ---------------------------------------------------------------------------
@@ -199,8 +181,8 @@ pub struct CustomMessageEntry {
     pub timestamp: String,
     /// Extension identifier for filtering on reload.
     pub custom_type: String,
-    /// Message content (plain text or rich blocks).
-    pub content: CustomMessageContent,
+    /// Arbitrary extension-specific data payload.
+    pub data: Option<serde_json::Value>,
     /// Whether to display in the UI.
     pub display: bool,
     /// Extension-specific metadata (not sent to LLM).
@@ -295,7 +277,6 @@ impl fmt::Display for SessionEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ameli_ai::types::TextContent;
 
     fn test_user_message(text: &str) -> AgentMessage {
         AgentMessage::User(ameli_ai::types::UserMessage::text(text))
@@ -342,19 +323,6 @@ mod tests {
             thinking_level: "high".to_string(),
         });
         assert_eq!(format!("{entry}"), "thinking_level_change(xyz)");
-    }
-
-    #[test]
-    fn custom_message_content_text() {
-        let content = CustomMessageContent::Text("hello".to_string());
-        assert_eq!(content, CustomMessageContent::Text("hello".to_string()));
-    }
-
-    #[test]
-    fn custom_message_content_rich() {
-        let content =
-            CustomMessageContent::Rich(vec![MediaContentBlock::Text(TextContent::new("rich"))]);
-        assert!(matches!(content, CustomMessageContent::Rich(_)));
     }
 
     #[test]
@@ -418,7 +386,7 @@ mod tests {
                 parent_id: None,
                 timestamp: String::new(),
                 custom_type: "test".to_string(),
-                content: CustomMessageContent::Text("hi".to_string()),
+                data: Some(serde_json::json!("hi")),
                 display: true,
                 details: None,
             }),

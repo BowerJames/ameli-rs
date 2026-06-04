@@ -54,11 +54,9 @@ use crate::extension::{init_extensions, Extension};
 use crate::extension::{ExtensionContext, ExtensionRunner};
 use crate::interface::Interface;
 use crate::session_manager::{
-    CustomMessageContent, ModelRef, SessionContext, SessionManager, SessionMessage, SessionMetadata,
+    ModelRef, SessionContext, SessionManager, SessionMessage, SessionMetadata,
 };
-use ameli_agent_core::types::{
-    AgentEvent, AgentMessage, AgentState, CustomAgentMessage, ThinkingLevel,
-};
+use ameli_agent_core::types::{AgentEvent, AgentMessage, AgentState, CustomMessage, ThinkingLevel};
 use ameli_agent_core::{AgentOptions, ArcAgent, Subscription};
 use ameli_ai::types::{AudioContent, ImageContent, MediaContentBlock, TextContent};
 use ameli_model_registry::ModelRegistry;
@@ -151,28 +149,16 @@ async fn persist_message<M: SessionMetadata>(
             }
         }
         AgentMessage::Custom(custom_msg) => {
-            // Extract fields from the custom message via to_json().
-            let json = custom_msg.to_json();
-            if let (Some(custom_type), Some(content_val)) = (
-                json.get("customType").and_then(|v| v.as_str()),
-                json.get("content"),
-            ) {
-                let content =
-                    match serde_json::from_value::<CustomMessageContent>(content_val.clone()) {
-                        Ok(c) => c,
-                        Err(_) => CustomMessageContent::Text(content_val.to_string()),
-                    };
-                let display = json
-                    .get("display")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true);
-                let details = json.get("details").cloned();
-                if let Err(e) = session_manager
-                    .append_custom_message_entry(custom_type, content, display, details)
-                    .await
-                {
-                    tracing::warn!("Failed to persist custom message to session: {e}");
-                }
+            if let Err(e) = session_manager
+                .append_custom_message_entry(
+                    &custom_msg.custom_type,
+                    custom_msg.data.clone(),
+                    true,
+                    None,
+                )
+                .await
+            {
+                tracing::warn!("Failed to persist custom message to session: {e}");
             }
         }
     }
@@ -301,11 +287,9 @@ impl<M: SessionMetadata> AgentSession<M> {
         if let Some(ref acc) = accumulated {
             if let Some(ref msgs) = acc.messages {
                 for msg in msgs {
-                    prompt_messages.push(custom_message_content_to_agent_message(
+                    prompt_messages.push(custom_data_to_agent_message(
                         &msg.custom_type,
-                        msg.content.clone(),
-                        msg.display,
-                        msg.details.clone(),
+                        msg.data.clone(),
                     ));
                 }
             }
@@ -477,72 +461,30 @@ fn thinking_level_to_str(level: ThinkingLevel) -> &'static str {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Conversion helpers (relocated from session_manager module)
-// ---------------------------------------------------------------------------
-
-/// Extension-injected message content wrapped as a custom agent message.
-#[derive(Clone)]
-struct ExtensionCustomMessage {
-    custom_type: String,
-    content: CustomMessageContent,
-    display: bool,
-    details: Option<serde_json::Value>,
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
-impl CustomAgentMessage for ExtensionCustomMessage {
-    fn message_type(&self) -> &str {
-        &self.custom_type
-    }
-    fn clone_boxed(&self) -> Box<dyn CustomAgentMessage> {
-        Box::new(self.clone())
-    }
-    fn to_json(&self) -> serde_json::Value {
-        let base = match &self.content {
-            CustomMessageContent::Text(t) => serde_json::json!({
-                "customType": self.custom_type,
-                "content": t,
-                "display": self.display,
-            }),
-            CustomMessageContent::Rich(blocks) => serde_json::json!({
-                "customType": self.custom_type,
-                "content": blocks,
-                "display": self.display,
-            }),
-        };
-        if let Some(details) = &self.details {
-            let mut map = base.as_object().cloned().unwrap_or_default();
-            map.insert("details".to_string(), details.clone());
-            serde_json::Value::Object(map)
-        } else {
-            base
-        }
-    }
-    fn fmt_debug(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ExtensionCustomMessage")
-            .field("custom_type", &self.custom_type)
-            .field("display", &self.display)
-            .finish_non_exhaustive()
-    }
-}
+// ---------------------------------------------------------------------------
+// Conversion helpers
+// ---------------------------------------------------------------------------
 
-/// Convert a [`CustomMessageContent`] to an [`AgentMessage::Custom`].
+/// Convert custom message data to an [`AgentMessage::Custom`].
 ///
 /// Used by [`AgentSession`] to inject `before_agent_start` extension messages
-/// into the LLM context.
-fn custom_message_content_to_agent_message(
+/// into the agent transcript.
+fn custom_data_to_agent_message(
     custom_type: &str,
-    content: CustomMessageContent,
-    display: bool,
-    details: Option<serde_json::Value>,
+    data: Option<serde_json::Value>,
 ) -> AgentMessage {
-    let ext_msg = ExtensionCustomMessage {
+    AgentMessage::Custom(CustomMessage {
         custom_type: custom_type.to_string(),
-        content,
-        display,
-        details,
-    };
-    AgentMessage::Custom(Box::new(ext_msg))
+        data,
+        timestamp: now_ms(),
+    })
 }
 
 /// Default formatting for a compaction summary as a synthetic user message.
@@ -1071,12 +1013,7 @@ mod tests {
     async fn persist_custom_message_appends_to_session() {
         let sm: Arc<dyn SessionManager<InMemoryMetadata>> = Arc::new(InMemorySessionManager::new());
 
-        let msg = custom_message_content_to_agent_message(
-            "context",
-            CustomMessageContent::Text("some context".into()),
-            true,
-            None,
-        );
+        let msg = custom_data_to_agent_message("context", Some(serde_json::json!("some context")));
         persist_message(&msg, &sm).await;
 
         let entries = sm.entries().await.unwrap();

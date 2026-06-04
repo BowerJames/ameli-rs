@@ -48,7 +48,7 @@ type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 // Callback type aliases (keeps struct definitions clean)
 // ---------------------------------------------------------------------------
 
-type ConvertToLlmFn = dyn Fn(&[AgentMessage]) -> BoxFuture<Vec<Message>> + Send + Sync;
+pub type ConvertToLlmFn = dyn Fn(&[AgentMessage]) -> BoxFuture<Vec<Message>> + Send + Sync;
 type TransformContextFn = dyn Fn(&[AgentMessage], Option<CancellationToken>) -> BoxFuture<Vec<AgentMessage>>
     + Send
     + Sync;
@@ -1584,30 +1584,15 @@ mod tests {
 
     #[tokio::test]
     async fn default_convert_to_llm_filters_standard() {
-        use serde_json::json;
-
         // Standard message
         let user = AgentMessage::User(ameli_ai::types::UserMessage::text("hi"));
 
         // Custom message
-        #[derive(Clone)]
-        struct TestCustom;
-        impl CustomAgentMessage for TestCustom {
-            fn message_type(&self) -> &str {
-                "test"
-            }
-            fn clone_boxed(&self) -> Box<dyn CustomAgentMessage> {
-                Box::new(self.clone())
-            }
-            fn to_json(&self) -> serde_json::Value {
-                json!({})
-            }
-            fn fmt_debug(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.debug_struct("TestCustom").finish()
-            }
-        }
-
-        let custom = AgentMessage::Custom(Box::new(TestCustom));
+        let custom = AgentMessage::Custom(CustomMessage {
+            custom_type: "test".into(),
+            data: None,
+            timestamp: 0,
+        });
 
         let messages = vec![user, custom];
         let result = default_convert_to_llm(&messages).await;

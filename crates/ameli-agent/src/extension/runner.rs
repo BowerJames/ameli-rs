@@ -114,6 +114,10 @@ type FormatBranchSummaryHandler = Arc<
         + Sync,
 >;
 
+// Custom message formatter handler type.
+type CustomMessageFormatterHandler =
+    Arc<dyn Fn(&str, &serde_json::Value) -> Option<ameli_ai::types::Message> + Send + Sync>;
+
 // ---------------------------------------------------------------------------
 // ExtensionHandlers — interior-mutable handler storage
 // ---------------------------------------------------------------------------
@@ -145,6 +149,9 @@ struct ExtensionHandlers {
     format_compaction_summary_handlers: Vec<FormatCompactionSummaryHandler>,
     format_branch_summary_handlers: Vec<FormatBranchSummaryHandler>,
 
+    // Custom message formatters
+    custom_message_formatters: Vec<(String, CustomMessageFormatterHandler)>,
+
     // Commands
     commands: Vec<RegisteredCommand>,
 
@@ -173,6 +180,7 @@ impl ExtensionHandlers {
             message_end_handlers: Vec::new(),
             format_compaction_summary_handlers: Vec::new(),
             format_branch_summary_handlers: Vec::new(),
+            custom_message_formatters: Vec::new(),
             commands: Vec::new(),
             tools: Vec::new(),
         }
@@ -197,6 +205,7 @@ impl ExtensionHandlers {
             && self.before_agent_start_handlers.is_empty()
             && self.format_compaction_summary_handlers.is_empty()
             && self.format_branch_summary_handlers.is_empty()
+            && self.custom_message_formatters.is_empty()
             && self.commands.is_empty()
             && self.tools.is_empty()
     }
@@ -398,6 +407,15 @@ impl ExtensionRunner {
         h.tools.push(tool);
     }
 
+    pub(crate) fn add_custom_message_formatter(
+        &self,
+        custom_type: String,
+        handler: CustomMessageFormatterHandler,
+    ) {
+        let mut h = self.handlers.write();
+        h.custom_message_formatters.push((custom_type, handler));
+    }
+
     // -----------------------------------------------------------------------
     // Error listeners
     // -----------------------------------------------------------------------
@@ -469,6 +487,12 @@ impl ExtensionRunner {
         !h.tool_execution_update_handlers.is_empty()
     }
 
+    /// Returns `true` if any extension registered a custom message formatter.
+    pub fn has_custom_message_formatters(&self) -> bool {
+        let h = self.handlers.read();
+        !h.custom_message_formatters.is_empty()
+    }
+
     /// Returns `true` if any handlers are registered for any event type.
     pub fn has_any_handlers(&self) -> bool {
         let h = self.handlers.read();
@@ -489,6 +513,29 @@ impl ExtensionRunner {
     pub fn get_registered_commands(&self) -> Vec<RegisteredCommand> {
         let h = self.handlers.read();
         h.commands.clone()
+    }
+
+    // -----------------------------------------------------------------------
+    // Custom message formatting
+    // -----------------------------------------------------------------------
+
+    /// Look up a formatter by `custom_type` and convert `(custom_type, data)`
+    /// to an LLM-compatible [`Message`](ameli_ai::types::Message).
+    ///
+    /// Returns `None` if no formatter is registered for the given type, or
+    /// if the formatter returns `None` (skip the message).
+    pub fn format_custom_message(
+        &self,
+        custom_type: &str,
+        data: &serde_json::Value,
+    ) -> Option<ameli_ai::types::Message> {
+        let handlers = self.handlers.read().custom_message_formatters.clone();
+        for (registered_type, handler) in &handlers {
+            if registered_type == custom_type {
+                return handler(custom_type, data);
+            }
+        }
+        None
     }
 
     // -----------------------------------------------------------------------
@@ -527,6 +574,21 @@ impl ExtensionRunner {
                 let runner = runner.clone();
                 let messages = messages.to_vec();
                 Box::pin(async move { runner.handle_transform_context(&messages, cancel).await })
+            }));
+        }
+
+        if self.has_custom_message_formatters() {
+            let runner = self.clone();
+            let original = options.convert_to_llm.clone();
+            options.convert_to_llm = Some(Arc::new(move |messages: &[AgentMessage]| {
+                let runner = runner.clone();
+                let original = original.clone();
+                let messages = messages.to_vec();
+                Box::pin(async move {
+                    runner
+                        .handle_convert_to_llm_with_custom_messages(&messages, original.as_ref())
+                        .await
+                })
             }));
         }
     }
@@ -1171,6 +1233,59 @@ impl ExtensionRunner {
     ) -> Vec<AgentMessage> {
         self.emit_context(messages.to_vec(), cancel.unwrap_or_default())
             .await
+    }
+
+    /// Wrapped `convert_to_llm` that converts custom messages via registered
+    /// formatters before delegating standard messages to the original function.
+    ///
+    /// For each [`AgentMessage::Custom`], looks up a formatter by
+    /// `custom_type`. If the formatter returns `Some(Message)`, the message
+    /// is included in the LLM context. If `None`, the message is skipped.
+    /// Standard messages are delegated to the original `convert_to_llm`.
+    /// Results are merged in original message order.
+    async fn handle_convert_to_llm_with_custom_messages(
+        &self,
+        messages: &[AgentMessage],
+        original: Option<&Arc<ameli_agent_core::agent::ConvertToLlmFn>>,
+    ) -> Vec<ameli_ai::types::Message> {
+        let mut custom_results: Vec<(usize, ameli_ai::types::Message)> = Vec::new();
+        let mut non_custom: Vec<AgentMessage> = Vec::new();
+        let mut non_custom_indices: Vec<usize> = Vec::new();
+
+        for (i, msg) in messages.iter().enumerate() {
+            match msg {
+                AgentMessage::Custom(custom) => {
+                    let data = custom.data.as_ref().unwrap_or(&serde_json::Value::Null);
+                    if let Some(llm_msg) = self.format_custom_message(&custom.custom_type, data) {
+                        custom_results.push((i, llm_msg));
+                    }
+                    // else skip — formatter returned None
+                }
+                other => {
+                    non_custom.push(other.clone());
+                    non_custom_indices.push(i);
+                }
+            }
+        }
+
+        // Delegate non-custom messages to original convert_to_llm
+        let non_custom_llm = match original {
+            Some(original_fn) => original_fn(&non_custom).await,
+            None => {
+                // Default filter: keep only standard LLM messages
+                non_custom.iter().filter_map(|m| m.as_message()).collect()
+            }
+        };
+
+        // Merge results in original message order
+        let mut merged: Vec<(usize, ameli_ai::types::Message)> = custom_results;
+        for (offset, llm_msg) in non_custom_llm.into_iter().enumerate() {
+            if let Some(&original_idx) = non_custom_indices.get(offset) {
+                merged.push((original_idx, llm_msg));
+            }
+        }
+        merged.sort_by_key(|(i, _)| *i);
+        merged.into_iter().map(|(_, msg)| msg).collect()
     }
 
     /// Report an error to all registered error listeners.
