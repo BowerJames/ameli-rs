@@ -407,6 +407,41 @@ impl ExtensionApi {
     pub fn register_tool(&self, tool: Arc<dyn AgentTool>) {
         self.runner.add_tool(tool);
     }
+
+    // -----------------------------------------------------------------------
+    // Custom message formatter registration
+    // -----------------------------------------------------------------------
+
+    /// Register a formatter that converts a custom message type to an
+    /// LLM-compatible [`Message`](ameli_ai::types::Message).
+    ///
+    /// The formatter is looked up by `custom_type` when the agent's
+    /// `convert_to_llm` pipeline encounters an
+    /// [`AgentMessage::Custom`](ameli_agent_core::types::AgentMessage::Custom).
+    /// If the formatter returns `Some(Message)`, the message is included in
+    /// the LLM context. If it returns `None`, the message is skipped.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// api.register_custom_message_formatter("instruction", |custom_type, data| {
+    ///     let msg = data["message"].as_str().unwrap_or("");
+    ///     Some(ameli_ai::types::Message::User(
+    ///         ameli_ai::types::UserMessage::text(&format!("<instruction>{msg}</instruction>"))
+    ///     ))
+    /// });
+    /// ```
+    pub fn register_custom_message_formatter(
+        &self,
+        custom_type: impl Into<String>,
+        handler: impl Fn(&str, &serde_json::Value) -> Option<ameli_ai::types::Message>
+            + Send
+            + Sync
+            + 'static,
+    ) {
+        self.runner
+            .add_custom_message_formatter(custom_type.into(), Arc::new(handler));
+    }
 }
 
 impl std::fmt::Debug for ExtensionApi {

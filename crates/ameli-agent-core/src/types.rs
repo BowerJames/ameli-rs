@@ -65,62 +65,46 @@ pub enum QueueMode {
 pub type ThinkingLevel = ameli_ai::types::ModelThinkingLevel;
 
 // ---------------------------------------------------------------------------
-// CustomAgentMessage trait
+// CustomMessage
 // ---------------------------------------------------------------------------
 
-/// Trait for custom agent message types that extend the standard LLM messages.
+/// A custom agent message with extension-defined type and JSON data.
 ///
-/// Apps implement this trait to add their own message types (e.g., artifacts,
-/// notifications, status messages) while maintaining compatibility with the
-/// agent loop.
+/// Extensions define custom message types (e.g. `"instruction"`, `"context"`)
+/// and register formatters that convert them to LLM-compatible
+/// [`Message`](ameli_ai::types::Message) values. The `custom_type` identifies
+/// which formatter to use; `data` carries the extension-specific payload.
+///
+/// This is a concrete, serializable type — session managers can persist and
+/// restore custom messages without knowing about extensions.
 ///
 /// # Examples
 ///
 /// ```
-/// use ameli_agent_core::types::CustomAgentMessage;
+/// use ameli_agent_core::types::CustomMessage;
 /// use serde_json::json;
-/// use std::fmt;
 ///
-/// #[derive(Clone)]
-/// struct ArtifactMessage {
-///     content: String,
-///     timestamp: u64,
-/// }
-///
-/// impl CustomAgentMessage for ArtifactMessage {
-///     fn message_type(&self) -> &str { "artifact" }
-///     fn clone_boxed(&self) -> Box<dyn CustomAgentMessage> {
-///         Box::new(self.clone())
-///     }
-///     fn to_json(&self) -> serde_json::Value {
-///         json!({ "content": self.content, "timestamp": self.timestamp })
-///     }
-///     fn fmt_debug(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-///         f.debug_struct("ArtifactMessage")
-///             .field("content", &self.content)
-///             .field("timestamp", &self.timestamp)
-///             .finish()
-///     }
-/// }
+/// let instruction = CustomMessage {
+///     custom_type: "instruction".into(),
+///     data: Some(json!({ "message": "You must now use the read tool" })),
+///     display: true,
+///     details: None,
+///     timestamp: 0,
+/// };
+/// assert_eq!(instruction.custom_type, "instruction");
 /// ```
-pub trait CustomAgentMessage: Send + Sync {
-    /// Discriminant for the custom message type (display/logging).
-    fn message_type(&self) -> &str;
-
-    /// Clone into a boxed trait object.
-    fn clone_boxed(&self) -> Box<dyn CustomAgentMessage>;
-
-    /// Serialize the custom message for persistence/debugging.
-    fn to_json(&self) -> serde_json::Value;
-
-    /// Format the custom message for debugging.
-    fn fmt_debug(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result;
-}
-
-impl fmt::Debug for dyn CustomAgentMessage {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.fmt_debug(f)
-    }
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CustomMessage {
+    /// Extension-defined type discriminator (e.g. `"instruction"`, `"context"`).
+    pub custom_type: String,
+    /// Arbitrary extension-specific data payload.
+    pub data: Option<serde_json::Value>,
+    /// Whether this message should be displayed in the UI.
+    pub display: bool,
+    /// Extension-specific metadata (not sent to LLM).
+    pub details: Option<serde_json::Value>,
+    /// Unix timestamp in milliseconds.
+    pub timestamp: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -130,41 +114,41 @@ impl fmt::Debug for dyn CustomAgentMessage {
 /// A message in the agent's conversation.
 ///
 /// Union of standard LLM messages ([`UserMessage`], [`AssistantMessage`],
-/// [`ToolResultMessage`]) and custom app messages via [`CustomAgentMessage`].
+/// [`ToolResultMessage`]) and custom app messages via [`CustomMessage`].
 ///
 /// The standard variants are zero-cost wrappers around the `ameli_ai` message
-/// types. The `Custom` variant holds a boxed trait object for extensibility.
+/// types. The `Custom` variant holds a concrete [`CustomMessage`] that
+/// extensions define and convert to LLM messages via registered formatters.
 pub enum AgentMessage {
     User(ameli_ai::types::UserMessage),
     Assistant(AssistantMessage),
     ToolResult(ToolResultMessage),
-    Custom(Box<dyn CustomAgentMessage>),
+    Custom(CustomMessage),
 }
 
 impl AgentMessage {
     /// Returns the role string for this message.
     ///
     /// Standard messages return `"user"`, `"assistant"`, or `"toolResult"`.
-    /// Custom messages return their [`CustomAgentMessage::message_type`].
+    /// Custom messages return `"custom"`.
     pub fn role(&self) -> &str {
         match self {
             Self::User(_) => "user",
             Self::Assistant(_) => "assistant",
             Self::ToolResult(_) => "toolResult",
-            Self::Custom(msg) => msg.message_type(),
+            Self::Custom(_) => "custom",
         }
     }
 
     /// Returns the Unix timestamp in milliseconds, if available.
     ///
-    /// Standard messages always have a timestamp. Custom messages return `None`
-    /// unless they carry their own timestamp semantics.
+    /// All message variants always have a timestamp.
     pub fn timestamp(&self) -> Option<u64> {
         match self {
             Self::User(m) => Some(m.timestamp),
             Self::Assistant(m) => Some(m.timestamp),
             Self::ToolResult(m) => Some(m.timestamp),
-            Self::Custom(_) => None,
+            Self::Custom(msg) => Some(msg.timestamp),
         }
     }
 
@@ -192,7 +176,7 @@ impl Clone for AgentMessage {
             Self::User(m) => Self::User(m.clone()),
             Self::Assistant(m) => Self::Assistant(m.clone()),
             Self::ToolResult(m) => Self::ToolResult(m.clone()),
-            Self::Custom(m) => Self::Custom(m.clone_boxed()),
+            Self::Custom(m) => Self::Custom(m.clone()),
         }
     }
 }
@@ -214,7 +198,7 @@ impl fmt::Display for AgentMessage {
             Self::User(m) => write!(f, "User({})", m.timestamp),
             Self::Assistant(m) => write!(f, "Assistant({})", m.timestamp),
             Self::ToolResult(m) => write!(f, "ToolResult({})", m.timestamp),
-            Self::Custom(msg) => write!(f, "Custom({})", msg.message_type()),
+            Self::Custom(msg) => write!(f, "Custom({})", msg.custom_type),
         }
     }
 }
@@ -780,41 +764,17 @@ mod tests {
 
     // -- CustomAgentMessage --
 
-    #[derive(Clone)]
-    struct ArtifactMessage {
-        content: String,
-        timestamp: u64,
-    }
-
-    impl CustomAgentMessage for ArtifactMessage {
-        fn message_type(&self) -> &str {
-            "artifact"
-        }
-        fn clone_boxed(&self) -> Box<dyn CustomAgentMessage> {
-            Box::new(self.clone())
-        }
-        fn to_json(&self) -> serde_json::Value {
-            json!({
-                "content": self.content,
-                "timestamp": self.timestamp
-            })
-        }
-        fn fmt_debug(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.debug_struct("ArtifactMessage")
-                .field("content", &self.content)
-                .field("timestamp", &self.timestamp)
-                .finish()
-        }
-    }
-
     #[test]
     fn custom_message_role() {
-        let msg = ArtifactMessage {
-            content: "test".into(),
+        let msg = CustomMessage {
+            custom_type: "artifact".into(),
+            data: Some(json!({"content": "test"})),
+            display: true,
+            details: None,
             timestamp: 1000,
         };
-        let agent_msg = AgentMessage::Custom(Box::new(msg));
-        assert_eq!(agent_msg.role(), "artifact");
+        let agent_msg = AgentMessage::Custom(msg);
+        assert_eq!(agent_msg.role(), "custom");
         assert!(!agent_msg.is_standard());
         assert!(agent_msg.as_message().is_none());
     }

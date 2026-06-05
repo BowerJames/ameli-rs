@@ -11,11 +11,11 @@
 
 use super::manager::{AsyncResult, BranchSummaryData, SessionManager, SessionMetadata};
 use super::types::{
-    BranchSummaryEntry, CompactionEntry, CustomEntry, CustomMessageContent, CustomMessageEntry,
-    MessageEntry, ModelChangeEntry, ModelRef, SessionContext, SessionEntry, SessionMessage,
+    BranchSummaryEntry, CompactionEntry, CustomEntry, CustomMessageEntry, MessageEntry,
+    ModelChangeEntry, ModelRef, SessionContext, SessionEntry, SessionMessage,
     ThinkingLevelChangeEntry,
 };
-use ameli_agent_core::types::AgentMessage;
+use ameli_agent_core::types::{AgentMessage, CustomMessage};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -299,8 +299,19 @@ impl SessionManager<InMemoryMetadata> for InMemorySessionManager {
                             timestamp: State::parse_timestamp_ms(&e.timestamp),
                         });
                     }
-                    // Custom and CustomMessage entries are not part of LLM context.
-                    SessionEntry::Custom(_) | SessionEntry::CustomMessage(_) => {}
+                    SessionEntry::CustomMessage(e) => {
+                        messages.push(SessionMessage::Agent(Box::new(AgentMessage::Custom(
+                            CustomMessage {
+                                custom_type: e.custom_type.clone(),
+                                data: e.data.clone(),
+                                display: e.display,
+                                details: e.details.clone(),
+                                timestamp: State::parse_timestamp_ms(&e.timestamp),
+                            },
+                        ))));
+                    }
+                    // Custom entries are extension state, not part of LLM context.
+                    SessionEntry::Custom(_) => {}
                 }
             }
 
@@ -427,7 +438,7 @@ impl SessionManager<InMemoryMetadata> for InMemorySessionManager {
     fn append_custom_message_entry(
         &self,
         custom_type: &str,
-        content: CustomMessageContent,
+        data: Option<serde_json::Value>,
         display: bool,
         details: Option<serde_json::Value>,
     ) -> AsyncResult<String> {
@@ -442,7 +453,7 @@ impl SessionManager<InMemoryMetadata> for InMemorySessionManager {
                 parent_id,
                 timestamp: State::now_timestamp(),
                 custom_type,
-                content,
+                data,
                 display,
                 details,
             });
@@ -717,7 +728,7 @@ mod tests {
         let id6 = sm
             .append_custom_message_entry(
                 "context",
-                CustomMessageContent::Text("some context".into()),
+                Some(serde_json::json!({"text": "some context"})),
                 true,
                 None,
             )
