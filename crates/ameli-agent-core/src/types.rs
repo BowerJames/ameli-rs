@@ -87,6 +87,8 @@ pub type ThinkingLevel = ameli_ai::types::ModelThinkingLevel;
 /// let instruction = CustomMessage {
 ///     custom_type: "instruction".into(),
 ///     data: Some(json!({ "message": "You must now use the read tool" })),
+///     display: true,
+///     details: None,
 ///     timestamp: 0,
 /// };
 /// assert_eq!(instruction.custom_type, "instruction");
@@ -97,6 +99,10 @@ pub struct CustomMessage {
     pub custom_type: String,
     /// Arbitrary extension-specific data payload.
     pub data: Option<serde_json::Value>,
+    /// Whether this message should be displayed in the UI.
+    pub display: bool,
+    /// Extension-specific metadata (not sent to LLM).
+    pub details: Option<serde_json::Value>,
     /// Unix timestamp in milliseconds.
     pub timestamp: u64,
 }
@@ -763,6 +769,8 @@ mod tests {
         let msg = CustomMessage {
             custom_type: "artifact".into(),
             data: Some(json!({"content": "test"})),
+            display: true,
+            details: None,
             timestamp: 1000,
         };
         let agent_msg = AgentMessage::Custom(msg);

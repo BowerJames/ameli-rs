@@ -153,8 +153,8 @@ async fn persist_message<M: SessionMetadata>(
                 .append_custom_message_entry(
                     &custom_msg.custom_type,
                     custom_msg.data.clone(),
-                    true,
-                    None,
+                    custom_msg.display,
+                    custom_msg.details.clone(),
                 )
                 .await
             {
@@ -290,6 +290,8 @@ impl<M: SessionMetadata> AgentSession<M> {
                     prompt_messages.push(custom_data_to_agent_message(
                         &msg.custom_type,
                         msg.data.clone(),
+                        msg.display,
+                        msg.details.clone(),
                     ));
                 }
             }
@@ -479,10 +481,14 @@ fn now_ms() -> u64 {
 fn custom_data_to_agent_message(
     custom_type: &str,
     data: Option<serde_json::Value>,
+    display: bool,
+    details: Option<serde_json::Value>,
 ) -> AgentMessage {
     AgentMessage::Custom(CustomMessage {
         custom_type: custom_type.to_string(),
         data,
+        display,
+        details,
         timestamp: now_ms(),
     })
 }
@@ -1013,7 +1019,12 @@ mod tests {
     async fn persist_custom_message_appends_to_session() {
         let sm: Arc<dyn SessionManager<InMemoryMetadata>> = Arc::new(InMemorySessionManager::new());
 
-        let msg = custom_data_to_agent_message("context", Some(serde_json::json!("some context")));
+        let msg = custom_data_to_agent_message(
+            "context",
+            Some(serde_json::json!("some context")),
+            true,
+            None,
+        );
         persist_message(&msg, &sm).await;
 
         let entries = sm.entries().await.unwrap();

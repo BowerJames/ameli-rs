@@ -2067,4 +2067,258 @@ mod tests {
         assert!(runner.get_registered_tools().is_empty());
         assert!(runner.get_registered_commands().is_empty());
     }
+
+    // -- Custom message formatter tests --------------------------------------
+
+    #[test]
+    fn has_custom_message_formatters_false_when_empty() {
+        let runner = ExtensionRunner::empty(noop_interface());
+        assert!(!runner.has_custom_message_formatters());
+    }
+
+    #[test]
+    fn format_custom_message_returns_none_when_no_formatter() {
+        let runner = ExtensionRunner::empty(noop_interface());
+        let result =
+            runner.format_custom_message("instruction", &serde_json::json!({"msg": "hello"}));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn format_custom_message_dispatches_to_registered_formatter() {
+        struct InstructionFormatter;
+        impl Extension for InstructionFormatter {
+            fn init(&self, api: &Arc<ExtensionApi>) {
+                api.register_custom_message_formatter("instruction", |_custom_type, data| {
+                    let msg = data["message"].as_str().unwrap_or("");
+                    Some(ameli_ai::types::Message::User(
+                        ameli_ai::types::UserMessage::text(&format!(
+                            "<instruction>{msg}</instruction>"
+                        )),
+                    ))
+                });
+            }
+        }
+
+        let runner = ExtensionRunner::from_extensions(&[Box::new(InstructionFormatter)]);
+        assert!(runner.has_custom_message_formatters());
+
+        let result = runner.format_custom_message(
+            "instruction",
+            &serde_json::json!({"message": "use the read tool"}),
+        );
+        assert!(result.is_some());
+        match result.unwrap() {
+            ameli_ai::types::Message::User(u) => match &u.content {
+                ameli_ai::types::UserContent::Text(t) => {
+                    assert!(t.contains("<instruction>use the read tool</instruction>"));
+                }
+                _ => panic!("expected text content"),
+            },
+            _ => panic!("expected User message"),
+        }
+    }
+
+    #[test]
+    fn format_custom_message_returns_none_for_unregistered_type() {
+        struct InstructionFormatter;
+        impl Extension for InstructionFormatter {
+            fn init(&self, api: &Arc<ExtensionApi>) {
+                api.register_custom_message_formatter("instruction", |_ct, _data| {
+                    Some(ameli_ai::types::Message::User(
+                        ameli_ai::types::UserMessage::text("injected"),
+                    ))
+                });
+            }
+        }
+
+        let runner = ExtensionRunner::from_extensions(&[Box::new(InstructionFormatter)]);
+        let result = runner.format_custom_message("context", &serde_json::json!(null));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn format_custom_message_first_registered_wins() {
+        struct FirstFormatter;
+        impl Extension for FirstFormatter {
+            fn init(&self, api: &Arc<ExtensionApi>) {
+                api.register_custom_message_formatter("instruction", |_ct, _data| {
+                    Some(ameli_ai::types::Message::User(
+                        ameli_ai::types::UserMessage::text("first"),
+                    ))
+                });
+            }
+        }
+
+        struct SecondFormatter;
+        impl Extension for SecondFormatter {
+            fn init(&self, api: &Arc<ExtensionApi>) {
+                api.register_custom_message_formatter("instruction", |_ct, _data| {
+                    Some(ameli_ai::types::Message::User(
+                        ameli_ai::types::UserMessage::text("second"),
+                    ))
+                });
+            }
+        }
+
+        let runner = ExtensionRunner::from_extensions(&[
+            Box::new(FirstFormatter),
+            Box::new(SecondFormatter),
+        ]);
+        let result = runner.format_custom_message("instruction", &serde_json::json!(null));
+        assert!(result.is_some());
+        match result.unwrap() {
+            ameli_ai::types::Message::User(u) => match &u.content {
+                ameli_ai::types::UserContent::Text(t) => assert_eq!(t, "first"),
+                _ => panic!("expected text"),
+            },
+            _ => panic!("expected User"),
+        }
+    }
+
+    #[tokio::test]
+    async fn handle_convert_to_llm_merges_custom_and_standard() {
+        use ameli_agent_core::types::{AgentMessage, CustomMessage};
+
+        struct InstructionFormatter;
+        impl Extension for InstructionFormatter {
+            fn init(&self, api: &Arc<ExtensionApi>) {
+                api.register_custom_message_formatter("instruction", |_ct, data| {
+                    let msg = data["message"].as_str().unwrap_or("");
+                    Some(ameli_ai::types::Message::User(
+                        ameli_ai::types::UserMessage::text(&format!(
+                            "<instruction>{msg}</instruction>"
+                        )),
+                    ))
+                });
+            }
+        }
+
+        let runner = ExtensionRunner::from_extensions(&[Box::new(InstructionFormatter)]);
+
+        let original: Arc<ameli_agent_core::agent::ConvertToLlmFn> = Arc::new(|messages| {
+            let msgs = messages.to_vec();
+            Box::pin(async move { msgs.iter().filter_map(|m| m.as_message()).collect() })
+        });
+
+        let messages = vec![
+            // Index 0: standard user message
+            AgentMessage::User(ameli_ai::types::UserMessage::text("hello")),
+            // Index 1: custom message with formatter
+            AgentMessage::Custom(CustomMessage {
+                custom_type: "instruction".into(),
+                data: Some(serde_json::json!({"message": "be helpful"})),
+                display: true,
+                details: None,
+                timestamp: 1000,
+            }),
+            // Index 2: standard user message
+            AgentMessage::User(ameli_ai::types::UserMessage::text("world")),
+        ];
+
+        let result = runner
+            .handle_convert_to_llm_with_custom_messages(&messages, Some(&original))
+            .await;
+
+        // All 3 messages should be present, in original order
+        assert_eq!(result.len(), 3);
+
+        // Index 0: standard user
+        match &result[0] {
+            ameli_ai::types::Message::User(u) => match &u.content {
+                ameli_ai::types::UserContent::Text(t) => assert_eq!(t, "hello"),
+                _ => panic!("expected text"),
+            },
+            _ => panic!("expected User"),
+        }
+
+        // Index 1: custom → formatted instruction
+        match &result[1] {
+            ameli_ai::types::Message::User(u) => match &u.content {
+                ameli_ai::types::UserContent::Text(t) => {
+                    assert!(t.contains("<instruction>be helpful</instruction>"))
+                }
+                _ => panic!("expected text"),
+            },
+            _ => panic!("expected User"),
+        }
+
+        // Index 2: standard user
+        match &result[2] {
+            ameli_ai::types::Message::User(u) => match &u.content {
+                ameli_ai::types::UserContent::Text(t) => assert_eq!(t, "world"),
+                _ => panic!("expected text"),
+            },
+            _ => panic!("expected User"),
+        }
+    }
+
+    #[tokio::test]
+    async fn handle_convert_to_llm_skips_unhandled_custom_messages() {
+        use ameli_agent_core::types::{AgentMessage, CustomMessage};
+
+        let runner = ExtensionRunner::from_extensions(&[]);
+
+        let original: Arc<ameli_agent_core::agent::ConvertToLlmFn> = Arc::new(|messages| {
+            let msgs = messages.to_vec();
+            Box::pin(async move { msgs.iter().filter_map(|m| m.as_message()).collect() })
+        });
+
+        let messages = vec![
+            AgentMessage::User(ameli_ai::types::UserMessage::text("hello")),
+            AgentMessage::Custom(CustomMessage {
+                custom_type: "unknown".into(),
+                data: None,
+                display: true,
+                details: None,
+                timestamp: 0,
+            }),
+            AgentMessage::User(ameli_ai::types::UserMessage::text("world")),
+        ];
+
+        let result = runner
+            .handle_convert_to_llm_with_custom_messages(&messages, Some(&original))
+            .await;
+
+        // Only the 2 standard messages should remain, in order
+        assert_eq!(result.len(), 2);
+        match &result[0] {
+            ameli_ai::types::Message::User(u) => match &u.content {
+                ameli_ai::types::UserContent::Text(t) => assert_eq!(t, "hello"),
+                _ => panic!("expected text"),
+            },
+            _ => panic!("expected User"),
+        }
+        match &result[1] {
+            ameli_ai::types::Message::User(u) => match &u.content {
+                ameli_ai::types::UserContent::Text(t) => assert_eq!(t, "world"),
+                _ => panic!("expected text"),
+            },
+            _ => panic!("expected User"),
+        }
+    }
+
+    #[test]
+    fn install_hooks_wraps_convert_to_llm_when_formatters_registered() {
+        struct InstructionFormatter;
+        impl Extension for InstructionFormatter {
+            fn init(&self, api: &Arc<ExtensionApi>) {
+                api.register_custom_message_formatter("instruction", |_ct, _data| {
+                    Some(ameli_ai::types::Message::User(
+                        ameli_ai::types::UserMessage::text("injected"),
+                    ))
+                });
+            }
+        }
+
+        let runner = ExtensionRunner::from_extensions(&[Box::new(InstructionFormatter)]);
+
+        let mut options = ameli_agent_core::AgentOptions::default();
+        // Store the original to verify it gets replaced
+        assert!(options.convert_to_llm.is_none());
+        runner.install_hooks(&mut options);
+
+        // convert_to_llm should now be Some (wrapped)
+        assert!(options.convert_to_llm.is_some());
+    }
 }

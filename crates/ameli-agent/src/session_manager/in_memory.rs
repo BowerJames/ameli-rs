@@ -304,6 +304,8 @@ impl SessionManager<InMemoryMetadata> for InMemorySessionManager {
                             CustomMessage {
                                 custom_type: e.custom_type.clone(),
                                 data: e.data.clone(),
+                                display: e.display,
+                                details: e.details.clone(),
                                 timestamp: State::parse_timestamp_ms(&e.timestamp),
                             },
                         ))));

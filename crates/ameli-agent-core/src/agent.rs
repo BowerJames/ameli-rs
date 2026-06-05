@@ -1591,6 +1591,8 @@ mod tests {
         let custom = AgentMessage::Custom(CustomMessage {
             custom_type: "test".into(),
             data: None,
+            display: true,
+            details: None,
             timestamp: 0,
         });
 
