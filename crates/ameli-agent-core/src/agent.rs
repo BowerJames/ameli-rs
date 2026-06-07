@@ -194,6 +194,29 @@ pub struct ExtensionHooks {
     pub convert_to_llm: Option<Arc<ConvertToLlmFn>>,
 }
 
+impl fmt::Debug for ExtensionHooks {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ExtensionHooks")
+            .field(
+                "before_tool_call",
+                &self.before_tool_call.as_ref().map(|_| "Some"),
+            )
+            .field(
+                "after_tool_call",
+                &self.after_tool_call.as_ref().map(|_| "Some"),
+            )
+            .field(
+                "transform_context",
+                &self.transform_context.as_ref().map(|_| "Some"),
+            )
+            .field(
+                "convert_to_llm",
+                &self.convert_to_llm.as_ref().map(|_| "Some"),
+            )
+            .finish()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // AgentInner — all mutable state behind a single Mutex
 // ---------------------------------------------------------------------------

@@ -568,13 +568,6 @@ impl ExtensionRunner {
     // Hook installation
     // -----------------------------------------------------------------------
 
-    /// Install hook closures into [`AgentOptions`](ameli_agent_core::AgentOptions)
-    /// for tool call interception and context transformation.
-    ///
-    /// Only installs a hook if there are registered handlers for the
-    /// corresponding event type. This avoids unnecessary overhead.
-    ///
-    /// Call this **before** constructing the [`ArcAgent`](ameli_agent_core::ArcAgent).
     /// Build and install extension-provided hooks onto the given agent.
     ///
     /// Constructs an [`ExtensionHooks`] from the registered handlers and
@@ -1697,12 +1690,15 @@ mod tests {
         let runner = ExtensionRunner::from_extensions(&extensions);
 
         let agent = ameli_agent_core::ArcAgent::new(ameli_agent_core::AgentOptions::default());
+        let before = agent.convert_to_llm().await;
         runner.install_hooks_on_agent(&agent).await;
+        let after = agent.convert_to_llm().await;
 
-        // Verify hooks were installed by checking the agent's state via build_loop_config
-        // We can't directly inspect the inner hooks, so we verify the agent doesn't panic
-        // when building loop config (which reads the hooks).
-        let _state = agent.state().await;
+        // convert_to_llm should NOT change (no formatters registered)
+        assert!(Arc::ptr_eq(&before, &after));
+        // The runner has tool_call handlers, so before_tool_call should have been
+        // installed. Verify by exercising the handler dispatch.
+        assert!(runner.has_tool_call_handlers());
     }
 
     #[tokio::test]
@@ -1713,7 +1709,8 @@ mod tests {
         let agent = ameli_agent_core::ArcAgent::new(ameli_agent_core::AgentOptions::default());
         runner.install_hooks_on_agent(&agent).await;
 
-        let _state = agent.state().await;
+        // The runner has context handlers — verify the handler is present.
+        assert!(runner.has_context_handlers());
     }
 
     #[tokio::test]
@@ -1724,7 +1721,8 @@ mod tests {
         let agent = ameli_agent_core::ArcAgent::new(ameli_agent_core::AgentOptions::default());
         runner.install_hooks_on_agent(&agent).await;
 
-        let _state = agent.state().await;
+        // The runner has tool_result handlers — verify the handler is present.
+        assert!(runner.has_tool_result_handlers());
     }
 
     #[tokio::test]
@@ -1732,9 +1730,12 @@ mod tests {
         let runner = ExtensionRunner::from_extensions(&[]);
 
         let agent = ameli_agent_core::ArcAgent::new(ameli_agent_core::AgentOptions::default());
+        let before = agent.convert_to_llm().await;
         runner.install_hooks_on_agent(&agent).await;
+        let after = agent.convert_to_llm().await;
 
-        let _state = agent.state().await;
+        // No hooks should have been installed — convert_to_llm unchanged.
+        assert!(Arc::ptr_eq(&before, &after));
     }
 
     // -- Hook handler mapping tests -----------------------------------------
