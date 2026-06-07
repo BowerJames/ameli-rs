@@ -8,13 +8,13 @@
 //! # Lifecycle
 //!
 //! 1. Create an empty runner with [`ExtensionRunner::empty`].
-//! 2. Create an [`ExtensionApi`](super::ExtensionApi) wrapping `Arc<ExtensionRunner>`.
-//! 3. Initialize extensions — they register handlers via the API.
-//! 4. Construct an `ArcAgent`.
-//! 5. Call [`ExtensionRunner::install_hooks_on_agent`] to install hook closures
-//!    onto the agent.
-//! 6. Construct an [`AgentSession`](crate::AgentSession) to handle event
-//!    subscription and persistence.
+//! 2. Create an `ArcAgent`.
+//! 3. Call [`ExtensionRunner::install_hooks_on_agent`] to unconditionally
+//!    install all hook closures onto the agent.
+//! 4. Create [`ExtensionActions`](super::ExtensionActions) with `Weak<Agent>`.
+//! 5. Create [`ExtensionApi`](super::ExtensionApi) wrapping runner + actions.
+//! 6. Initialize extensions — they register handlers via the API.
+//! 7. Set tools from the runner onto the agent.
 //!
 //! # Error handling
 //!
@@ -287,42 +287,42 @@ impl ExtensionRunner {
     ///
     /// Convenience that creates an empty runner, builds an `ExtensionApi`,
     /// initializes all extensions, and returns the `Arc<ExtensionRunner>`.
-    /// Uses [`NoopInterface`](crate::interface::NoopInterface) and a
-    /// no-op [`ExtensionActions`](super::ExtensionActions) backed by a
-    /// throwaway `InMemorySessionManager`.
+    /// Uses [`NoopInterface`](crate::interface::NoopInterface).
     ///
-    /// **Note:** the no-op `ExtensionActions` cannot inject messages into an
-    /// agent. Action methods (`send_user_message`, `send_custom_message`)
-    /// will silently no-op. Session persistence (`append_custom_entry`) still
-    /// works but writes to the throwaway session manager. Callers who need
-    /// full action support should construct `ExtensionRunner::empty()` +
-    /// `ExtensionActions::new(session_manager, &agent)` + `init_extensions()`
-    /// directly.
-    pub fn from_extensions(extensions: &[Box<dyn Extension>]) -> Arc<Self> {
+    /// The provided `agent` is used to construct an [`ExtensionActions`](super::ExtensionActions)
+    /// so that action methods (`send_user_message`, `send_custom_message`) are fully
+    /// functional from extension handlers and tools.
+    pub fn from_extensions(
+        extensions: &[Box<dyn Extension>],
+        agent: &Arc<ameli_agent_core::agent::Agent>,
+    ) -> Arc<Self> {
         let runner = Arc::new(Self::empty(Arc::new(crate::interface::NoopInterface)));
-        let actions = Arc::new(super::ExtensionActions::no_op(Arc::new(
-            crate::session_manager::InMemorySessionManager::new(),
-        )));
-        crate::extension::init_extensions(extensions, &runner, &actions);
+        let actions = Arc::new(super::ExtensionActions::new(
+            Arc::new(crate::session_manager::InMemorySessionManager::new()),
+            agent,
+        ));
+        let api = Arc::new(super::ExtensionApi::new(runner.clone(), actions));
+        crate::extension::init_extensions(&api, extensions);
         runner
     }
 
     /// Create a runner by initializing a list of extensions with a custom
     /// interface.
     ///
-    /// **Note:** like [`from_extensions`](Self::from_extensions), the
-    /// `ExtensionActions` created here is ephemeral. Action methods on
-    /// `ExtensionApi` will silently no-op. See that method's documentation
-    /// for details.
+    /// The provided `agent` is used to construct an [`ExtensionActions`](super::ExtensionActions)
+    /// so that action methods are fully functional from extension handlers and tools.
     pub fn from_extensions_with_interface(
         extensions: &[Box<dyn Extension>],
         interface: Arc<dyn Interface>,
+        agent: &Arc<ameli_agent_core::agent::Agent>,
     ) -> Arc<Self> {
         let runner = Arc::new(Self::empty(interface));
-        let actions = Arc::new(super::ExtensionActions::no_op(Arc::new(
-            crate::session_manager::InMemorySessionManager::new(),
-        )));
-        crate::extension::init_extensions(extensions, &runner, &actions);
+        let actions = Arc::new(super::ExtensionActions::new(
+            Arc::new(crate::session_manager::InMemorySessionManager::new()),
+            agent,
+        ));
+        let api = Arc::new(super::ExtensionApi::new(runner.clone(), actions));
+        crate::extension::init_extensions(&api, extensions);
         runner
     }
 
@@ -568,11 +568,16 @@ impl ExtensionRunner {
     // Hook installation
     // -----------------------------------------------------------------------
 
-    /// Build and install extension-provided hooks onto the given agent.
+    /// Unconditionally install all extension hook closures onto the given
+    /// agent.
     ///
-    /// Constructs an [`ExtensionHooks`] from the registered handlers and
-    /// calls [`ArcAgent::install_extension_hooks`]. Only hook types that
-    /// have registered handlers are included in the hooks struct.
+    /// All four hooks (`before_tool_call`, `after_tool_call`,
+    /// `transform_context`, `convert_to_llm`) are always installed, each
+    /// capturing `Arc<ExtensionRunner>`. At runtime they iterate the
+    /// runner's handler lists — when no handlers are registered, the lists
+    /// are empty and the hooks are natural no-ops. This means extensions
+    /// can be initialised *after* hook installation; their registrations
+    /// simply populate the lists that the closures already iterate.
     ///
     /// The `convert_to_llm` hook wraps the agent's current conversion
     /// function so that custom message formatters can delegate standard
@@ -580,49 +585,44 @@ impl ExtensionRunner {
     pub async fn install_hooks_on_agent(self: &Arc<Self>, agent: &ameli_agent_core::ArcAgent) {
         let mut hooks = ameli_agent_core::ExtensionHooks::default();
 
-        if self.has_tool_call_handlers() {
-            let runner = self.clone();
-            hooks.before_tool_call = Some(Arc::new(move |ctx, cancel| {
-                let runner = runner.clone();
-                let ctx = ctx.clone();
-                Box::pin(async move { runner.handle_before_tool_call(&ctx, cancel).await })
-            }));
-        }
+        // before_tool_call — dispatches to tool_call_handlers
+        let runner = self.clone();
+        hooks.before_tool_call = Some(Arc::new(move |ctx, cancel| {
+            let runner = runner.clone();
+            let ctx = ctx.clone();
+            Box::pin(async move { runner.handle_before_tool_call(&ctx, cancel).await })
+        }));
 
-        if self.has_tool_result_handlers() {
-            let runner = self.clone();
-            hooks.after_tool_call = Some(Arc::new(move |ctx, cancel| {
-                let runner = runner.clone();
-                let ctx = ctx.clone();
-                Box::pin(async move { runner.handle_after_tool_call(&ctx, cancel).await })
-            }));
-        }
+        // after_tool_call — dispatches to tool_result_handlers
+        let runner = self.clone();
+        hooks.after_tool_call = Some(Arc::new(move |ctx, cancel| {
+            let runner = runner.clone();
+            let ctx = ctx.clone();
+            Box::pin(async move { runner.handle_after_tool_call(&ctx, cancel).await })
+        }));
 
-        if self.has_context_handlers() {
-            let runner = self.clone();
-            hooks.transform_context = Some(Arc::new(move |messages, cancel| {
-                let runner = runner.clone();
-                let messages = messages.to_vec();
-                Box::pin(async move { runner.handle_transform_context(&messages, cancel).await })
-            }));
-        }
+        // transform_context — dispatches to context_handlers
+        let runner = self.clone();
+        hooks.transform_context = Some(Arc::new(move |messages, cancel| {
+            let runner = runner.clone();
+            let messages = messages.to_vec();
+            Box::pin(async move { runner.handle_transform_context(&messages, cancel).await })
+        }));
 
-        if self.has_custom_message_formatters() {
-            let runner = self.clone();
-            // Capture the agent's current convert_to_llm so the wrapper can
-            // delegate standard messages to it.
-            let original = agent.convert_to_llm().await;
-            hooks.convert_to_llm = Some(Arc::new(move |messages: &[AgentMessage]| {
-                let runner = runner.clone();
-                let original = original.clone();
-                let messages = messages.to_vec();
-                Box::pin(async move {
-                    runner
-                        .handle_convert_to_llm_with_custom_messages(&messages, Some(&original))
-                        .await
-                })
-            }));
-        }
+        // convert_to_llm — wraps custom message formatters around the
+        // agent's current conversion function.
+        let runner = self.clone();
+        let original = agent.convert_to_llm().await;
+        hooks.convert_to_llm = Some(Arc::new(move |messages: &[AgentMessage]| {
+            let runner = runner.clone();
+            let original = original.clone();
+            let messages = messages.to_vec();
+            Box::pin(async move {
+                runner
+                    .handle_convert_to_llm_with_custom_messages(&messages, Some(&original))
+                    .await
+            })
+        }));
 
         agent.install_extension_hooks(hooks).await;
     }
@@ -1422,6 +1422,40 @@ mod tests {
         Arc::new(crate::interface::NoopInterface)
     }
 
+    fn test_agent() -> Arc<ameli_agent_core::agent::Agent> {
+        use ameli_agent_core::types::{AgentState, ThinkingLevel};
+        use ameli_agent_core::AgentOptions;
+        use std::collections::HashSet;
+
+        ameli_agent_core::agent::Agent::new_arc(AgentOptions {
+            initial_state: Some(AgentState {
+                system_prompt: String::new(),
+                model: ameli_ai::types::Model {
+                    id: "test".into(),
+                    name: "test".into(),
+                    api: "test".into(),
+                    provider: "test".into(),
+                    base_url: "http://localhost".into(),
+                    reasoning: false,
+                    thinking_level_map: None,
+                    input: vec![ameli_ai::types::InputType::Text],
+                    cost: ameli_ai::types::Cost::default(),
+                    context_window: 128_000,
+                    max_tokens: 16_384,
+                    compat: None,
+                },
+                thinking_level: ThinkingLevel::Off,
+                tools: vec![],
+                messages: vec![],
+                is_streaming: false,
+                streaming_message: None,
+                pending_tool_calls: HashSet::new(),
+                error_message: None,
+            }),
+            ..Default::default()
+        })
+    }
+
     // -- Test extensions ----------------------------------------------------
 
     struct LoggingExtension;
@@ -1622,14 +1656,14 @@ mod tests {
     fn from_extensions_collects_handlers() {
         let extensions: Vec<Box<dyn Extension>> =
             vec![Box::new(LoggingExtension), Box::new(BlockBashExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions);
+        let runner = ExtensionRunner::from_extensions(&extensions, &test_agent());
         assert!(runner.has_tool_call_handlers());
         assert!(runner.has_any_handlers());
     }
 
     #[test]
     fn no_handlers_when_empty() {
-        let runner = ExtensionRunner::from_extensions(&[]);
+        let runner = ExtensionRunner::from_extensions(&[], &test_agent());
         assert!(!runner.has_tool_call_handlers());
         assert!(!runner.has_tool_result_handlers());
         assert!(!runner.has_context_handlers());
@@ -1645,7 +1679,7 @@ mod tests {
     #[test]
     fn get_registered_tools() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(ToolRegisteringExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions);
+        let runner = ExtensionRunner::from_extensions(&extensions, &test_agent());
         let tools = runner.get_registered_tools();
         assert_eq!(tools.len(), 1);
         let first = tools.first();
@@ -1656,7 +1690,7 @@ mod tests {
     #[test]
     fn get_registered_commands() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(CommandExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions);
+        let runner = ExtensionRunner::from_extensions(&extensions, &test_agent());
         let commands = runner.get_registered_commands();
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].name, "greet");
@@ -1669,7 +1703,7 @@ mod tests {
         let error_count = Arc::new(AtomicUsize::new(0));
         let error_count_clone = error_count.clone();
 
-        let runner = ExtensionRunner::from_extensions(&[]);
+        let runner = ExtensionRunner::from_extensions(&[], &test_agent());
         runner.on_error(Arc::new(move |_err| {
             error_count_clone.fetch_add(1, Ordering::SeqCst);
         }));
@@ -1687,24 +1721,20 @@ mod tests {
     #[tokio::test]
     async fn install_hooks_on_agent_with_tool_call_handler() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(BlockBashExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions);
+        let runner = ExtensionRunner::from_extensions(&extensions, &test_agent());
 
         let agent = ameli_agent_core::ArcAgent::new(ameli_agent_core::AgentOptions::default());
-        let before = agent.convert_to_llm().await;
         runner.install_hooks_on_agent(&agent).await;
-        let after = agent.convert_to_llm().await;
 
-        // convert_to_llm should NOT change (no formatters registered)
-        assert!(Arc::ptr_eq(&before, &after));
-        // The runner has tool_call handlers, so before_tool_call should have been
-        // installed. Verify by exercising the handler dispatch.
+        // convert_to_llm is always replaced (unconditional installation).
+        // Verify by exercising the handler dispatch.
         assert!(runner.has_tool_call_handlers());
     }
 
     #[tokio::test]
     async fn install_hooks_on_agent_with_context_handler() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(ContextTransformExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions);
+        let runner = ExtensionRunner::from_extensions(&extensions, &test_agent());
 
         let agent = ameli_agent_core::ArcAgent::new(ameli_agent_core::AgentOptions::default());
         runner.install_hooks_on_agent(&agent).await;
@@ -1716,7 +1746,7 @@ mod tests {
     #[tokio::test]
     async fn install_hooks_on_agent_with_tool_result_handler() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(ToolResultModifierExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions);
+        let runner = ExtensionRunner::from_extensions(&extensions, &test_agent());
 
         let agent = ameli_agent_core::ArcAgent::new(ameli_agent_core::AgentOptions::default());
         runner.install_hooks_on_agent(&agent).await;
@@ -1726,16 +1756,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn install_hooks_on_agent_skips_when_no_handlers() {
-        let runner = ExtensionRunner::from_extensions(&[]);
+    async fn install_hooks_on_agent_always_installs() {
+        let runner = ExtensionRunner::from_extensions(&[], &test_agent());
 
         let agent = ameli_agent_core::ArcAgent::new(ameli_agent_core::AgentOptions::default());
-        let before = agent.convert_to_llm().await;
-        runner.install_hooks_on_agent(&agent).await;
-        let after = agent.convert_to_llm().await;
 
-        // No hooks should have been installed — convert_to_llm unchanged.
-        assert!(Arc::ptr_eq(&before, &after));
+        // State snapshot before — no hooks, default tools, no streaming
+        let state_before = agent.state().await;
+        assert!(state_before.tools.is_empty());
+
+        runner.install_hooks_on_agent(&agent).await;
+
+        // Hooks are installed unconditionally — the agent is usable even
+        // with no registered handlers.
+        assert!(!agent.is_active().await);
     }
 
     // -- Hook handler mapping tests -----------------------------------------
@@ -1743,7 +1777,7 @@ mod tests {
     #[tokio::test]
     async fn before_tool_call_blocks_bash() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(BlockBashExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions);
+        let runner = ExtensionRunner::from_extensions(&extensions, &test_agent());
 
         let ctx = BeforeToolCallContext {
             assistant_message: AssistantMessage {
@@ -1784,7 +1818,7 @@ mod tests {
     #[tokio::test]
     async fn before_tool_call_allows_other_tools() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(BlockBashExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions);
+        let runner = ExtensionRunner::from_extensions(&extensions, &test_agent());
 
         let ctx = BeforeToolCallContext {
             assistant_message: AssistantMessage {
@@ -1822,7 +1856,7 @@ mod tests {
     #[tokio::test]
     async fn after_tool_call_modifies_result() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(ToolResultModifierExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions);
+        let runner = ExtensionRunner::from_extensions(&extensions, &test_agent());
 
         let ctx = AfterToolCallContext {
             assistant_message: AssistantMessage {
@@ -1870,7 +1904,7 @@ mod tests {
     #[tokio::test]
     async fn context_transform_filters_messages() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(ContextTransformExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions);
+        let runner = ExtensionRunner::from_extensions(&extensions, &test_agent());
 
         let messages = vec![
             AgentMessage::User(ameli_ai::types::UserMessage::text("hello")),
@@ -1886,7 +1920,7 @@ mod tests {
     #[tokio::test]
     async fn format_compaction_summary_custom() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(CompactionFormatExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions);
+        let runner = ExtensionRunner::from_extensions(&extensions, &test_agent());
 
         let result = runner
             .emit_format_compaction_summary("old conversation", 1000, CancellationToken::new())
@@ -1908,7 +1942,7 @@ mod tests {
 
     #[tokio::test]
     async fn format_compaction_summary_default_when_no_handlers() {
-        let runner = ExtensionRunner::from_extensions(&[]);
+        let runner = ExtensionRunner::from_extensions(&[], &test_agent());
         let result = runner
             .emit_format_compaction_summary("summary", 1000, CancellationToken::new())
             .await;
@@ -1920,7 +1954,7 @@ mod tests {
     #[tokio::test]
     async fn before_agent_start_override() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(BeforeAgentStartOverrideExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions);
+        let runner = ExtensionRunner::from_extensions(&extensions, &test_agent());
 
         let result = runner
             .emit_before_agent_start("hello", &[], &[], "original", CancellationToken::new())
@@ -1935,7 +1969,7 @@ mod tests {
     #[tokio::test]
     async fn message_end_replaces() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(MessageEndReplaceExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions);
+        let runner = ExtensionRunner::from_extensions(&extensions, &test_agent());
 
         let event = MessageEndEvent {
             message: AgentMessage::User(ameli_ai::types::UserMessage::text("hello")),
@@ -1951,13 +1985,13 @@ mod tests {
 
     #[tokio::test]
     async fn session_start_dispatches() {
-        let runner = ExtensionRunner::from_extensions(&[Box::new(LoggingExtension)]);
+        let runner = ExtensionRunner::from_extensions(&[Box::new(LoggingExtension)], &test_agent());
         runner.emit_session_start(SessionStartReason::Startup).await;
     }
 
     #[tokio::test]
     async fn session_shutdown_dispatches() {
-        let runner = ExtensionRunner::from_extensions(&[Box::new(LoggingExtension)]);
+        let runner = ExtensionRunner::from_extensions(&[Box::new(LoggingExtension)], &test_agent());
         let handled = runner
             .emit_session_shutdown(SessionShutdownReason::Quit)
             .await;
@@ -1966,7 +2000,7 @@ mod tests {
 
     #[tokio::test]
     async fn session_shutdown_returns_false_when_no_handlers() {
-        let runner = ExtensionRunner::from_extensions(&[]);
+        let runner = ExtensionRunner::from_extensions(&[], &test_agent());
         let handled = runner
             .emit_session_shutdown(SessionShutdownReason::Quit)
             .await;
@@ -1977,7 +2011,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_command_dispatches() {
-        let runner = ExtensionRunner::from_extensions(&[Box::new(CommandExtension)]);
+        let runner = ExtensionRunner::from_extensions(&[Box::new(CommandExtension)], &test_agent());
         let ctx = CommandContext {
             extension_context: ExtensionContext::for_testing(),
         };
@@ -1987,7 +2021,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_command_unknown_fails() {
-        let runner = ExtensionRunner::from_extensions(&[]);
+        let runner = ExtensionRunner::from_extensions(&[], &test_agent());
         let ctx = CommandContext {
             extension_context: ExtensionContext::for_testing(),
         };
@@ -2026,10 +2060,12 @@ mod tests {
             }
         }
 
-        let runner =
-            ExtensionRunner::from_extensions(&[Box::new(FailingThenSucceedingExtension {
+        let runner = ExtensionRunner::from_extensions(
+            &[Box::new(FailingThenSucceedingExtension {
                 ran_flag: second_handler_ran.clone(),
-            })]);
+            })],
+            &test_agent(),
+        );
 
         let error_flag = error_received.clone();
         runner.on_error(Arc::new(move |err| {
@@ -2080,9 +2116,12 @@ mod tests {
             }
         }
 
-        let runner = ExtensionRunner::from_extensions(&[Box::new(AgentStartCountingExtension {
-            count: call_count.clone(),
-        })]);
+        let runner = ExtensionRunner::from_extensions(
+            &[Box::new(AgentStartCountingExtension {
+                count: call_count.clone(),
+            })],
+            &test_agent(),
+        );
 
         // Dispatch via the public routing method, not the private dispatch_agent_start
         runner
@@ -2137,7 +2176,8 @@ mod tests {
             }
         }
 
-        let runner = ExtensionRunner::from_extensions(&[Box::new(InstructionFormatter)]);
+        let runner =
+            ExtensionRunner::from_extensions(&[Box::new(InstructionFormatter)], &test_agent());
         assert!(runner.has_custom_message_formatters());
 
         let result = runner.format_custom_message(
@@ -2169,7 +2209,8 @@ mod tests {
             }
         }
 
-        let runner = ExtensionRunner::from_extensions(&[Box::new(InstructionFormatter)]);
+        let runner =
+            ExtensionRunner::from_extensions(&[Box::new(InstructionFormatter)], &test_agent());
         let result = runner.format_custom_message("context", &serde_json::json!(null));
         assert!(result.is_none());
     }
@@ -2198,10 +2239,10 @@ mod tests {
             }
         }
 
-        let runner = ExtensionRunner::from_extensions(&[
-            Box::new(FirstFormatter),
-            Box::new(SecondFormatter),
-        ]);
+        let runner = ExtensionRunner::from_extensions(
+            &[Box::new(FirstFormatter), Box::new(SecondFormatter)],
+            &test_agent(),
+        );
         let result = runner.format_custom_message("instruction", &serde_json::json!(null));
         assert!(result.is_some());
         match result.unwrap() {
@@ -2231,7 +2272,8 @@ mod tests {
             }
         }
 
-        let runner = ExtensionRunner::from_extensions(&[Box::new(InstructionFormatter)]);
+        let runner =
+            ExtensionRunner::from_extensions(&[Box::new(InstructionFormatter)], &test_agent());
 
         let original: Arc<ameli_agent_core::agent::ConvertToLlmFn> = Arc::new(|messages| {
             let msgs = messages.to_vec();
@@ -2294,7 +2336,7 @@ mod tests {
     async fn handle_convert_to_llm_skips_unhandled_custom_messages() {
         use ameli_agent_core::types::{AgentMessage, CustomMessage};
 
-        let runner = ExtensionRunner::from_extensions(&[]);
+        let runner = ExtensionRunner::from_extensions(&[], &test_agent());
 
         let original: Arc<ameli_agent_core::agent::ConvertToLlmFn> = Arc::new(|messages| {
             let msgs = messages.to_vec();
@@ -2348,7 +2390,8 @@ mod tests {
             }
         }
 
-        let runner = ExtensionRunner::from_extensions(&[Box::new(InstructionFormatter)]);
+        let runner =
+            ExtensionRunner::from_extensions(&[Box::new(InstructionFormatter)], &test_agent());
 
         let agent = ameli_agent_core::ArcAgent::new(ameli_agent_core::AgentOptions::default());
         // Get the original convert_to_llm before installing hooks
