@@ -23,13 +23,14 @@
 //!
 //! 1. Resolve model + validate API key
 //! 2. Create empty `ExtensionRunner`
-//! 3. Construct `ArcAgent` (no hooks or tools yet)
-//! 4. Construct `ExtensionActions` with `Weak<Agent>` (fully wired)
-//! 5. Initialize extensions (register hooks/tools into runner)
-//! 6. Install extension hooks on the agent
-//! 7. Set tools from extensions on the agent
-//! 8. Create `AgentSession` (subscribe + emit session_start)
-//! 9. Restore/init session context
+//! 3. Construct `ArcAgent` (no tools yet)
+//! 4. Unconditionally install all extension hook closures on the agent
+//! 5. Construct `ExtensionActions` with `Weak<Agent>` (fully wired)
+//! 6. Create `ExtensionApi` wrapping runner + actions
+//! 7. Initialize extensions (register hooks/tools into runner)
+//! 8. Set tools from extensions on the agent
+//! 9. Create `AgentSession` (subscribe + emit session_start)
+//! 10. Restore/init session context
 //!
 //! # Session Management
 //!

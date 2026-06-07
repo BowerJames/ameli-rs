@@ -47,7 +47,7 @@
 use crate::auth_storage::AuthStorage;
 use crate::error::CreateAgentSessionError;
 use crate::extension::{
-    init_extensions, Extension, ExtensionActions, ExtensionContext, ExtensionRunner,
+    init_extensions, Extension, ExtensionActions, ExtensionApi, ExtensionContext, ExtensionRunner,
 };
 use crate::interface::Interface;
 use crate::session_manager::{ModelRef, SessionContext, SessionManager, SessionMessage};
@@ -639,10 +639,10 @@ pub async fn create_agent_session(
             provider: model.provider.clone(),
         })?;
 
-    // 3. Create empty ExtensionRunner (no hooks or tools yet).
+    // 3. Create empty ExtensionRunner (no handlers registered yet).
     let runner = Arc::new(ExtensionRunner::empty(options.interface.clone()));
 
-    // 4. Construct ArcAgent — no hooks, no tools yet.
+    // 4. Construct ArcAgent (no tools yet — set after extensions register).
     let thinking_level = options.thinking_level.unwrap_or(ThinkingLevel::Off);
     let auth_storage = options.auth_storage.clone();
 
@@ -668,22 +668,27 @@ pub async fn create_agent_session(
     };
     let agent = ArcAgent::new(agent_options);
 
-    // 5. Create ExtensionActions — fully wired with Weak<Agent>.
+    // 5. Unconditionally install all extension hook closures on the agent.
+    //    The closures capture Arc<ExtensionRunner> and iterate handler lists
+    //    at runtime — empty lists are natural no-ops.
+    runner.install_hooks_on_agent(&agent).await;
+
+    // 6. Create ExtensionActions with Weak<Agent> from the agent.
     let actions = Arc::new(ExtensionActions::new(
         options.session_manager.clone(),
         agent.agent(),
     ));
 
-    // 6. Initialize extensions (register hooks/tools into runner).
-    init_extensions(&options.extensions, &runner, &actions);
+    // 7. Create ExtensionApi wrapping runner + actions.
+    let api = Arc::new(ExtensionApi::new(runner.clone(), actions.clone()));
 
-    // 7. Install extension hooks on the agent.
-    runner.install_hooks_on_agent(&agent).await;
+    // 8. Initialize extensions — they register handlers/tools into the runner.
+    init_extensions(&api, &options.extensions);
 
-    // 8. Set tools from extensions on the agent.
+    // 9. Set tools from extensions on the agent.
     agent.set_tools(runner.get_registered_tools()).await;
 
-    // 9. Construct AgentSession (subscribe + emit session_start).
+    // 10. Construct AgentSession (subscribe + emit session_start).
     let session = AgentSession::new(AgentSessionConfig {
         agent,
         session_manager: options.session_manager.clone(),
@@ -693,7 +698,7 @@ pub async fn create_agent_session(
     })
     .await;
 
-    // 10. Restore session context from storage (only if session has existing data).
+    // 11. Restore session context from storage (only if session has existing data).
     let session_ctx = options.session_manager.build_context().await?;
     let has_existing_session = !session_ctx.messages.is_empty();
 
@@ -752,6 +757,23 @@ mod tests {
         }
     }
 
+    fn test_core_agent() -> Arc<ameli_agent_core::agent::Agent> {
+        ameli_agent_core::agent::Agent::new_arc(ameli_agent_core::AgentOptions {
+            initial_state: Some(AgentState {
+                system_prompt: String::new(),
+                model: test_model(),
+                thinking_level: ThinkingLevel::Off,
+                tools: vec![],
+                messages: vec![],
+                is_streaming: false,
+                streaming_message: None,
+                pending_tool_calls: HashSet::new(),
+                error_message: None,
+            }),
+            ..Default::default()
+        })
+    }
+
     fn test_agent() -> ArcAgent {
         ArcAgent::new(ameli_agent_core::AgentOptions {
             initial_state: Some(AgentState {
@@ -782,7 +804,8 @@ mod tests {
             session_manager.clone(),
             agent.agent(),
         ));
-        crate::extension::init_extensions(&[Box::new(NoCommandsExtension)], &runner, &actions);
+        let api = Arc::new(ExtensionApi::new(runner.clone(), actions.clone()));
+        crate::extension::init_extensions(&api, &[Box::new(NoCommandsExtension)]);
         AgentSession::new(AgentSessionConfig {
             agent,
             session_manager,
@@ -1052,7 +1075,7 @@ mod tests {
     #[tokio::test]
     async fn handle_agent_event_persists_message_end() {
         let sm: Arc<dyn SessionManager> = Arc::new(InMemorySessionManager::new());
-        let runner = ExtensionRunner::from_extensions(&[]);
+        let runner = ExtensionRunner::from_extensions(&[], &test_core_agent());
 
         let event = AgentEvent::MessageEnd {
             message: AgentMessage::User(ameli_ai::types::UserMessage::text("hello")),
