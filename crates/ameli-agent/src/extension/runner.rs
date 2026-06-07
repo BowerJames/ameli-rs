@@ -286,8 +286,17 @@ impl ExtensionRunner {
     ///
     /// Convenience that creates an empty runner, builds an `ExtensionApi`,
     /// initializes all extensions, and returns the `Arc<ExtensionRunner>`.
-    /// Uses [`NoopInterface`](crate::interface::NoopInterface) and a no-op
-    /// [`ExtensionActions`](super::ExtensionActions) (no session manager, no agent).
+    /// Uses [`NoopInterface`](crate::interface::NoopInterface) and an
+    /// ephemeral [`ExtensionActions`](super::ExtensionActions) backed by a
+    /// throwaway `InMemorySessionManager`.
+    ///
+    /// **Note:** the ephemeral `ExtensionActions` is dropped after init, so
+    /// extensions initialized through this path can register handlers and
+    /// tools, but action methods (`send_user_message`, `send_custom_message`,
+    /// `append_custom_entry`) will silently no-op. Callers who need action
+    /// support should construct `ExtensionRunner::empty()` +
+    /// `ExtensionActions::new(session_manager)` + `init_extensions()`
+    /// directly.
     pub fn from_extensions(extensions: &[Box<dyn Extension>]) -> Arc<Self> {
         let runner = Arc::new(Self::empty(Arc::new(crate::interface::NoopInterface)));
         let actions = Arc::new(super::ExtensionActions::new(Arc::new(
@@ -299,6 +308,11 @@ impl ExtensionRunner {
 
     /// Create a runner by initializing a list of extensions with a custom
     /// interface.
+    ///
+    /// **Note:** like [`from_extensions`](Self::from_extensions), the
+    /// `ExtensionActions` created here is ephemeral. Action methods on
+    /// `ExtensionApi` will silently no-op. See that method's documentation
+    /// for details.
     pub fn from_extensions_with_interface(
         extensions: &[Box<dyn Extension>],
         interface: Arc<dyn Interface>,

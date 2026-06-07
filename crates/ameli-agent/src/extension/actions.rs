@@ -202,7 +202,7 @@ mod tests {
     use super::*;
     use crate::session_manager::InMemorySessionManager;
     use ameli_agent_core::types::AgentState;
-    use ameli_agent_core::{AgentOptions, ArcAgent};
+    use ameli_agent_core::AgentOptions;
     use ameli_ai::types::{Cost, InputType, Model};
     use std::collections::HashSet;
 
@@ -252,22 +252,6 @@ mod tests {
         let actions = ExtensionActions::new(test_session_manager());
         actions.set_agent(&agent);
 
-        let arc_agent = ArcAgent::new(AgentOptions {
-            initial_state: Some(AgentState {
-                system_prompt: String::new(),
-                model: test_model(),
-                thinking_level: ameli_agent_core::types::ThinkingLevel::Off,
-                tools: vec![],
-                messages: vec![],
-                is_streaming: false,
-                streaming_message: None,
-                pending_tool_calls: HashSet::new(),
-                error_message: None,
-            }),
-            ..Default::default()
-        });
-
-        // We test against the inner Agent directly since ArcAgent wraps it
         actions
             .send_user_message(
                 ameli_ai::types::UserContent::Text("steer this".into()),
