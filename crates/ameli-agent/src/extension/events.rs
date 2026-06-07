@@ -48,6 +48,22 @@ use std::sync::Arc;
 type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
 // ---------------------------------------------------------------------------
+// MessageMode
+// ---------------------------------------------------------------------------
+
+/// Determines how a message sent by an extension is injected into the agent loop.
+///
+/// - [`Steer`](MessageMode::Steer): injected after the current assistant turn
+///   finishes executing its tool calls, before the next LLM call.
+/// - [`FollowUp`](MessageMode::FollowUp): injected after the agent would otherwise
+///   stop, potentially triggering a new round of processing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MessageMode {
+    Steer,
+    FollowUp,
+}
+
+// ---------------------------------------------------------------------------
 // Session lifecycle reasons
 // ---------------------------------------------------------------------------
 

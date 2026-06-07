@@ -7,9 +7,10 @@
 //! # Architecture
 //!
 //! ```text
-//! ExtensionRunner          ← created first with empty handler storage
+//! ExtensionRunner          ← pure event bus (handler storage + dispatch)
+//! ExtensionActions         ← action performer (Weak<Agent> + session manager)
 //!     ↓
-//! ExtensionApi             ← wraps Arc<ExtensionRunner>, shared with all extensions
+//! ExtensionApi             ← facade wrapping both, shared with all extensions
 //!     ↓
 //! Extension trait          → impl Extension for MyExt { fn init(&self, api) }
 //!     ↓
@@ -18,13 +19,16 @@
 //!
 //! # Extension lifecycle
 //!
-//! 1. Create an [`ExtensionRunner`] (empty handler storage behind `RwLock`).
-//! 2. Create an [`ExtensionApi`] wrapping `Arc<ExtensionRunner>`.
+//! 1. Create an [`ExtensionRunner`] (pure event bus) and [`ExtensionActions`]
+//!    (action performer with session manager).
+//! 2. Create an [`ExtensionApi`] wrapping both.
 //! 3. Call [`Extension::init`] on each extension with `&Arc<ExtensionApi>`.
-//!    Extensions call `&self` registration methods to subscribe to events,
-//!    register tools, and register commands. They may clone the `Arc<ExtensionApi>`
-//!    and pass it to tools/commands they build.
-//! 4. The [`ExtensionRunner`] wires the accumulated handlers into the agent loop.
+//!    Extensions call registration methods to subscribe to events, register
+//!    tools, and register commands. They may also call action methods like
+//!    [`ExtensionApi::send_user_message`] from handlers and tools.
+//! 4. After constructing the agent, call
+//!    [`ExtensionActions::set_agent`] to wire the weak reference.
+//! 5. The [`ExtensionRunner`] wires the accumulated handlers into the agent loop.
 //!
 //! # Events
 //!
@@ -41,10 +45,12 @@
 //! for the headless first pass. UI-specific extensions (shortcuts, flags,
 //! rendering) and model/provider events are deferred to future work.
 
+pub mod actions;
 pub mod context;
 pub mod events;
 pub mod runner;
 
+pub use actions::ExtensionActions;
 pub use context::ExtensionContext;
 pub use events::*;
 pub use runner::{ExtensionError, ExtensionRunner};
@@ -104,11 +110,13 @@ pub trait Extension: Send + Sync {
 // ExtensionApi
 // ---------------------------------------------------------------------------
 
-/// Registration surface passed to extensions during [`Extension::init`].
+/// Registration surface and action facade passed to extensions during
+/// [`Extension::init`].
 ///
-/// Wraps `Arc<ExtensionRunner>` and forwards all registration calls through
-/// to the runner's interior-mutable storage. Extensions receive `&Arc<Self>`
-/// so they can clone it and pass it to tools/commands they build.
+/// Wraps `Arc<ExtensionRunner>` for handler registration and
+/// `Arc<ExtensionActions>` for runtime actions (sending messages, persisting
+/// session entries). Extensions receive `&Arc<Self>` so they can clone it
+/// and pass it to tools/commands they build.
 ///
 /// # Handler contract
 ///
@@ -118,12 +126,13 @@ pub trait Extension: Send + Sync {
 /// `None` to allow default behavior.
 pub struct ExtensionApi {
     runner: Arc<ExtensionRunner>,
+    actions: Arc<ExtensionActions>,
 }
 
 impl ExtensionApi {
-    /// Create a new API surface backed by the given runner.
-    pub fn new(runner: Arc<ExtensionRunner>) -> Self {
-        Self { runner }
+    /// Create a new API surface backed by the given runner and actions.
+    pub fn new(runner: Arc<ExtensionRunner>, actions: Arc<ExtensionActions>) -> Self {
+        Self { runner, actions }
     }
 
     // -----------------------------------------------------------------------
@@ -480,8 +489,63 @@ impl ExtensionApi {
         data: Option<serde_json::Value>,
     ) -> crate::session_manager::manager::AsyncResult<String> {
         let custom_type = custom_type.to_string();
+        let actions = self.actions.clone();
         let runner = self.runner.clone();
-        Box::pin(async move { runner.append_custom_entry(&custom_type, data).await })
+        Box::pin(async move {
+            let result = actions.append_custom_entry(&custom_type, data).await;
+            if let Err(ref e) = result {
+                runner.report_error(ExtensionError {
+                    event: "append_custom_entry".to_string(),
+                    error: e.to_string(),
+                });
+            }
+            result
+        })
+    }
+
+    // -----------------------------------------------------------------------
+    // Message injection
+    // -----------------------------------------------------------------------
+
+    /// Send a user message to the agent's processing queue.
+    ///
+    /// Builds a [`UserMessage`](ameli_ai::types::UserMessage) from the given
+    /// content and injects it into the queue determined by `mode`:
+    ///
+    /// - [`MessageMode::Steer`]: injected after the current assistant turn
+    ///   finishes executing its tool calls, before the next LLM call.
+    /// - [`MessageMode::FollowUp`]: injected after the agent would otherwise
+    ///   stop, potentially triggering a new round of processing.
+    ///
+    /// Silently does nothing if the agent has been dropped (session torn down).
+    pub async fn send_user_message(
+        &self,
+        content: ameli_ai::types::UserContent,
+        mode: MessageMode,
+    ) {
+        self.actions.send_user_message(content, mode).await;
+    }
+
+    /// Send a custom message to the agent's processing queue.
+    ///
+    /// Builds a [`CustomMessage`](ameli_agent_core::types::CustomMessage) from
+    /// the given parameters and injects it into the queue determined by `mode`.
+    ///
+    /// Custom messages are converted to LLM-compatible messages by registered
+    /// custom message formatters during the `convert_to_llm` pipeline.
+    ///
+    /// Silently does nothing if the agent has been dropped (session torn down).
+    pub async fn send_custom_message(
+        &self,
+        custom_type: &str,
+        data: Option<serde_json::Value>,
+        display: bool,
+        details: Option<serde_json::Value>,
+        mode: MessageMode,
+    ) {
+        self.actions
+            .send_custom_message(custom_type, data, display, details, mode)
+            .await;
     }
 }
 
@@ -497,14 +561,14 @@ impl std::fmt::Debug for ExtensionApi {
 
 /// Initialize a list of extensions using a shared [`ExtensionApi`].
 ///
-/// Creates an [`ExtensionApi`] wrapping the runner and calls
+/// Creates an [`ExtensionApi`] wrapping the runner and actions, then calls
 /// [`Extension::init`] on each extension with `&Arc<ExtensionApi>`.
 /// All registrations are forwarded to the runner's interior-mutable storage.
 ///
 /// # Examples
 ///
 /// ```
-/// use ameli_agent::extension::{Extension, ExtensionApi, ExtensionRunner, init_extensions};
+/// use ameli_agent::extension::{Extension, ExtensionApi, ExtensionRunner, ExtensionActions, init_extensions};
 /// use ameli_agent::interface::NoopInterface;
 /// use ameli_agent::session_manager::InMemorySessionManager;
 /// use std::sync::Arc;
@@ -515,12 +579,17 @@ impl std::fmt::Debug for ExtensionApi {
 /// }
 ///
 /// let session_manager = Arc::new(InMemorySessionManager::new());
-/// let runner = Arc::new(ExtensionRunner::empty(Arc::new(NoopInterface), session_manager));
+/// let runner = Arc::new(ExtensionRunner::empty(Arc::new(NoopInterface)));
+/// let actions = Arc::new(ExtensionActions::new(session_manager));
 /// let extensions: Vec<Box<dyn Extension>> = vec![Box::new(MyExt)];
-/// init_extensions(&extensions, &runner);
+/// init_extensions(&extensions, &runner, &actions);
 /// ```
-pub fn init_extensions(extensions: &[Box<dyn Extension>], runner: &Arc<ExtensionRunner>) {
-    let api = Arc::new(ExtensionApi::new(runner.clone()));
+pub fn init_extensions(
+    extensions: &[Box<dyn Extension>],
+    runner: &Arc<ExtensionRunner>,
+    actions: &Arc<ExtensionActions>,
+) {
+    let api = Arc::new(ExtensionApi::new(runner.clone(), actions.clone()));
     for ext in extensions {
         ext.init(&api);
     }
@@ -670,13 +739,15 @@ mod tests {
         Arc::new(crate::session_manager::InMemorySessionManager::new())
     }
 
+    fn test_actions() -> Arc<ExtensionActions> {
+        Arc::new(ExtensionActions::new(test_session_manager()))
+    }
+
     #[test]
     fn register_tool() {
-        let runner = Arc::new(ExtensionRunner::empty(
-            noop_interface(),
-            test_session_manager(),
-        ));
-        let api = Arc::new(ExtensionApi::new(runner.clone()));
+        let runner = Arc::new(ExtensionRunner::empty(noop_interface()));
+        let actions = test_actions();
+        let api = Arc::new(ExtensionApi::new(runner.clone(), actions));
         api.register_tool(Arc::new(EchoTool));
         let tools = runner.get_registered_tools();
         assert_eq!(tools.len(), 1);
@@ -693,23 +764,19 @@ mod tests {
     fn init_extensions_collects_registrations() {
         let extensions: Vec<Box<dyn Extension>> =
             vec![Box::new(BlockBashExtension), Box::new(LoggingExtension)];
-        let runner = Arc::new(ExtensionRunner::empty(
-            noop_interface(),
-            test_session_manager(),
-        ));
-        init_extensions(&extensions, &runner);
+        let runner = Arc::new(ExtensionRunner::empty(noop_interface()));
+        let actions = test_actions();
+        init_extensions(&extensions, &runner, &actions);
         assert!(runner.has_tool_call_handlers());
         assert!(runner.has_any_handlers());
     }
 
     #[test]
     fn register_command() {
-        let runner = Arc::new(ExtensionRunner::empty(
-            noop_interface(),
-            test_session_manager(),
-        ));
+        let runner = Arc::new(ExtensionRunner::empty(noop_interface()));
+        let actions = test_actions();
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(CommandExtension)];
-        init_extensions(&extensions, &runner);
+        init_extensions(&extensions, &runner, &actions);
         let commands = runner.get_registered_commands();
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].name, "greet");
@@ -718,44 +785,36 @@ mod tests {
 
     #[test]
     fn register_before_agent_start() {
-        let runner = Arc::new(ExtensionRunner::empty(
-            noop_interface(),
-            test_session_manager(),
-        ));
+        let runner = Arc::new(ExtensionRunner::empty(noop_interface()));
+        let actions = test_actions();
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(BeforeAgentStartExtension)];
-        init_extensions(&extensions, &runner);
+        init_extensions(&extensions, &runner, &actions);
         assert!(runner.has_before_agent_start_handlers());
     }
 
     #[test]
     fn register_tool_execution_update() {
-        let runner = Arc::new(ExtensionRunner::empty(
-            noop_interface(),
-            test_session_manager(),
-        ));
+        let runner = Arc::new(ExtensionRunner::empty(noop_interface()));
+        let actions = test_actions();
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(ToolUpdateExtension)];
-        init_extensions(&extensions, &runner);
+        init_extensions(&extensions, &runner, &actions);
         assert!(runner.has_tool_execution_update_handlers());
     }
 
     #[test]
     fn register_message_end_hook() {
-        let runner = Arc::new(ExtensionRunner::empty(
-            noop_interface(),
-            test_session_manager(),
-        ));
+        let runner = Arc::new(ExtensionRunner::empty(noop_interface()));
+        let actions = test_actions();
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(MessageEndExtension)];
-        init_extensions(&extensions, &runner);
+        init_extensions(&extensions, &runner, &actions);
         assert!(runner.has_message_end_handlers());
     }
 
     #[test]
     fn has_agent_start_handler() {
-        let runner = Arc::new(ExtensionRunner::empty(
-            noop_interface(),
-            test_session_manager(),
-        ));
-        let api = Arc::new(ExtensionApi::new(runner.clone()));
+        let runner = Arc::new(ExtensionRunner::empty(noop_interface()));
+        let actions = test_actions();
+        let api = Arc::new(ExtensionApi::new(runner.clone(), actions));
         assert!(!runner.has_agent_start_handlers());
         api.on_agent_start(|_, _| Box::pin(async { Ok(()) }));
         assert!(runner.has_agent_start_handlers());
@@ -763,11 +822,9 @@ mod tests {
 
     #[test]
     fn has_tool_call_handler() {
-        let runner = Arc::new(ExtensionRunner::empty(
-            noop_interface(),
-            test_session_manager(),
-        ));
-        let api = Arc::new(ExtensionApi::new(runner.clone()));
+        let runner = Arc::new(ExtensionRunner::empty(noop_interface()));
+        let actions = test_actions();
+        let api = Arc::new(ExtensionApi::new(runner.clone(), actions));
         assert!(!runner.has_tool_call_handlers());
         api.on_tool_call(|_, _| Box::pin(async { None }));
         assert!(runner.has_tool_call_handlers());
@@ -775,12 +832,10 @@ mod tests {
 
     #[tokio::test]
     async fn tool_call_handler_blocks() {
-        let runner = Arc::new(ExtensionRunner::empty(
-            noop_interface(),
-            test_session_manager(),
-        ));
+        let runner = Arc::new(ExtensionRunner::empty(noop_interface()));
+        let actions = test_actions();
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(BlockBashExtension)];
-        init_extensions(&extensions, &runner);
+        init_extensions(&extensions, &runner, &actions);
 
         let event = ToolCallEvent {
             tool_call_id: "tc_1".into(),
@@ -799,12 +854,10 @@ mod tests {
 
     #[tokio::test]
     async fn tool_call_handler_allows_other_tools() {
-        let runner = Arc::new(ExtensionRunner::empty(
-            noop_interface(),
-            test_session_manager(),
-        ));
+        let runner = Arc::new(ExtensionRunner::empty(noop_interface()));
+        let actions = test_actions();
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(BlockBashExtension)];
-        init_extensions(&extensions, &runner);
+        init_extensions(&extensions, &runner, &actions);
 
         let event = ToolCallEvent {
             tool_call_id: "tc_2".into(),
@@ -819,11 +872,9 @@ mod tests {
 
     #[test]
     fn register_multiple_tools() {
-        let runner = Arc::new(ExtensionRunner::empty(
-            noop_interface(),
-            test_session_manager(),
-        ));
-        let api = Arc::new(ExtensionApi::new(runner.clone()));
+        let runner = Arc::new(ExtensionRunner::empty(noop_interface()));
+        let actions = test_actions();
+        let api = Arc::new(ExtensionApi::new(runner.clone(), actions));
         api.register_tool(Arc::new(EchoTool));
         api.register_tool(Arc::new(EchoTool));
         assert_eq!(runner.get_registered_tools().len(), 2);
@@ -831,22 +882,18 @@ mod tests {
 
     #[test]
     fn init_extensions_with_no_extensions() {
-        let runner = Arc::new(ExtensionRunner::empty(
-            noop_interface(),
-            test_session_manager(),
-        ));
+        let runner = Arc::new(ExtensionRunner::empty(noop_interface()));
+        let actions = test_actions();
         let extensions: Vec<Box<dyn Extension>> = vec![];
-        init_extensions(&extensions, &runner);
+        init_extensions(&extensions, &runner, &actions);
         assert!(!runner.has_any_handlers());
     }
 
     #[test]
     fn extension_can_clone_api() {
-        let runner = Arc::new(ExtensionRunner::empty(
-            noop_interface(),
-            test_session_manager(),
-        ));
-        let api = Arc::new(ExtensionApi::new(runner.clone()));
+        let runner = Arc::new(ExtensionRunner::empty(noop_interface()));
+        let actions = test_actions();
+        let api = Arc::new(ExtensionApi::new(runner.clone(), actions));
         let cloned = api.clone();
         cloned.register_tool(Arc::new(EchoTool));
         assert_eq!(runner.get_registered_tools().len(), 1);
@@ -857,8 +904,9 @@ mod tests {
     #[tokio::test]
     async fn append_custom_entry_via_api() {
         let sm = test_session_manager();
-        let runner = Arc::new(ExtensionRunner::empty(noop_interface(), sm.clone()));
-        let api = Arc::new(ExtensionApi::new(runner.clone()));
+        let runner = Arc::new(ExtensionRunner::empty(noop_interface()));
+        let actions = Arc::new(ExtensionActions::new(sm.clone()));
+        let api = Arc::new(ExtensionApi::new(runner.clone(), actions));
 
         let entry_id = api
             .append_custom_entry("test_type", Some(serde_json::json!({"key": 42})))
@@ -877,8 +925,9 @@ mod tests {
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         let sm = test_session_manager();
-        let runner = Arc::new(ExtensionRunner::empty(noop_interface(), sm.clone()));
-        let api = Arc::new(ExtensionApi::new(runner.clone()));
+        let runner = Arc::new(ExtensionRunner::empty(noop_interface()));
+        let actions = Arc::new(ExtensionActions::new(sm.clone()));
+        let api = Arc::new(ExtensionApi::new(runner.clone(), actions));
 
         let entry_count = Arc::new(AtomicUsize::new(0));
 
