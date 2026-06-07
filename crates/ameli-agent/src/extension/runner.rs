@@ -31,7 +31,6 @@ use crate::extension::context::ExtensionContext;
 use crate::extension::events::*;
 use crate::extension::Extension;
 use crate::interface::Interface;
-use crate::session_manager::{SessionError, SessionManager};
 use ameli_agent_core::types::{
     AfterToolCallContext, AfterToolCallResult, AgentMessage, AgentTool, BeforeToolCallContext,
     BeforeToolCallResult,
@@ -247,6 +246,10 @@ pub type ExtensionErrorListener = Arc<dyn Fn(ExtensionError) + Send + Sync>;
 /// [`ExtensionApi`](super::ExtensionApi) registers handlers via the write
 /// lock during init, while dispatch reads through the read lock at runtime.
 ///
+/// The runner is a pure event bus — it stores handlers and dispatches events.
+/// Runtime actions (sending messages, persisting entries) are handled by
+/// [`ExtensionActions`](super::ExtensionActions).
+///
 /// Construct via [`ExtensionRunner::empty`] or
 /// [`ExtensionRunner::from_extensions`]. Share via `Arc<Self>` so hook
 /// closures and the subscriber can both reference it.
@@ -257,8 +260,6 @@ pub struct ExtensionRunner {
     error_listeners: parking_lot::Mutex<Vec<ExtensionErrorListener>>,
     /// UI interface for creating ExtensionContext.
     interface: Arc<dyn Interface>,
-    /// Session storage backend for entry persistence.
-    session_manager: Arc<dyn SessionManager>,
     /// Turn counter for providing turn_index in events.
     turn_index: AtomicU32,
 }
@@ -268,16 +269,15 @@ impl ExtensionRunner {
     // Construction
     // -----------------------------------------------------------------------
 
-    /// Create an empty runner with the given interface and session manager.
+    /// Create an empty runner with the given interface.
     ///
     /// Handlers are registered later via the [`ExtensionApi`](super::ExtensionApi)
     /// and forwarded to this runner's interior-mutable storage.
-    pub fn empty(interface: Arc<dyn Interface>, session_manager: Arc<dyn SessionManager>) -> Self {
+    pub fn empty(interface: Arc<dyn Interface>) -> Self {
         Self {
             handlers: parking_lot::RwLock::new(ExtensionHandlers::empty()),
             error_listeners: parking_lot::Mutex::new(Vec::new()),
             interface,
-            session_manager,
             turn_index: AtomicU32::new(0),
         }
     }
@@ -286,16 +286,14 @@ impl ExtensionRunner {
     ///
     /// Convenience that creates an empty runner, builds an `ExtensionApi`,
     /// initializes all extensions, and returns the `Arc<ExtensionRunner>`.
-    /// Uses [`NoopInterface`](crate::interface::NoopInterface).
-    pub fn from_extensions(
-        extensions: &[Box<dyn Extension>],
-        session_manager: Arc<dyn SessionManager>,
-    ) -> Arc<Self> {
-        let runner = Arc::new(Self::empty(
-            Arc::new(crate::interface::NoopInterface),
-            session_manager,
-        ));
-        crate::extension::init_extensions(extensions, &runner);
+    /// Uses [`NoopInterface`](crate::interface::NoopInterface) and a no-op
+    /// [`ExtensionActions`](super::ExtensionActions) (no session manager, no agent).
+    pub fn from_extensions(extensions: &[Box<dyn Extension>]) -> Arc<Self> {
+        let runner = Arc::new(Self::empty(Arc::new(crate::interface::NoopInterface)));
+        let actions = Arc::new(super::ExtensionActions::new(Arc::new(
+            crate::session_manager::InMemorySessionManager::new(),
+        )));
+        crate::extension::init_extensions(extensions, &runner, &actions);
         runner
     }
 
@@ -304,10 +302,12 @@ impl ExtensionRunner {
     pub fn from_extensions_with_interface(
         extensions: &[Box<dyn Extension>],
         interface: Arc<dyn Interface>,
-        session_manager: Arc<dyn SessionManager>,
     ) -> Arc<Self> {
-        let runner = Arc::new(Self::empty(interface, session_manager));
-        crate::extension::init_extensions(extensions, &runner);
+        let runner = Arc::new(Self::empty(interface));
+        let actions = Arc::new(super::ExtensionActions::new(Arc::new(
+            crate::session_manager::InMemorySessionManager::new(),
+        )));
+        crate::extension::init_extensions(extensions, &runner, &actions);
         runner
     }
 
@@ -547,37 +547,6 @@ impl ExtensionRunner {
             }
         }
         None
-    }
-
-    // -----------------------------------------------------------------------
-    // Session entry persistence
-    // -----------------------------------------------------------------------
-
-    /// Append a custom entry to the session tree.
-    ///
-    /// Delegates to [`SessionManager::append_custom_entry`]. On error, the
-    /// error is reported to registered error listeners before being
-    /// propagated to the caller.
-    ///
-    /// Returns the ID of the created entry.
-    pub async fn append_custom_entry(
-        &self,
-        custom_type: &str,
-        data: Option<serde_json::Value>,
-    ) -> Result<String, SessionError> {
-        let result = self
-            .session_manager
-            .append_custom_entry(custom_type, data)
-            .await;
-
-        if let Err(ref e) = result {
-            self.report_error(ExtensionError {
-                event: "append_custom_entry".to_string(),
-                error: e.to_string(),
-            });
-        }
-
-        result
     }
 
     // -----------------------------------------------------------------------
@@ -1430,10 +1399,6 @@ mod tests {
         Arc::new(crate::interface::NoopInterface)
     }
 
-    fn test_session_manager() -> Arc<crate::session_manager::InMemorySessionManager> {
-        Arc::new(crate::session_manager::InMemorySessionManager::new())
-    }
-
     // -- Test extensions ----------------------------------------------------
 
     struct LoggingExtension;
@@ -1634,14 +1599,14 @@ mod tests {
     fn from_extensions_collects_handlers() {
         let extensions: Vec<Box<dyn Extension>> =
             vec![Box::new(LoggingExtension), Box::new(BlockBashExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions, test_session_manager());
+        let runner = ExtensionRunner::from_extensions(&extensions);
         assert!(runner.has_tool_call_handlers());
         assert!(runner.has_any_handlers());
     }
 
     #[test]
     fn no_handlers_when_empty() {
-        let runner = ExtensionRunner::from_extensions(&[], test_session_manager());
+        let runner = ExtensionRunner::from_extensions(&[]);
         assert!(!runner.has_tool_call_handlers());
         assert!(!runner.has_tool_result_handlers());
         assert!(!runner.has_context_handlers());
@@ -1657,7 +1622,7 @@ mod tests {
     #[test]
     fn get_registered_tools() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(ToolRegisteringExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions, test_session_manager());
+        let runner = ExtensionRunner::from_extensions(&extensions);
         let tools = runner.get_registered_tools();
         assert_eq!(tools.len(), 1);
         let first = tools.first();
@@ -1668,7 +1633,7 @@ mod tests {
     #[test]
     fn get_registered_commands() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(CommandExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions, test_session_manager());
+        let runner = ExtensionRunner::from_extensions(&extensions);
         let commands = runner.get_registered_commands();
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].name, "greet");
@@ -1681,7 +1646,7 @@ mod tests {
         let error_count = Arc::new(AtomicUsize::new(0));
         let error_count_clone = error_count.clone();
 
-        let runner = ExtensionRunner::from_extensions(&[], test_session_manager());
+        let runner = ExtensionRunner::from_extensions(&[]);
         runner.on_error(Arc::new(move |_err| {
             error_count_clone.fetch_add(1, Ordering::SeqCst);
         }));
@@ -1699,7 +1664,7 @@ mod tests {
     #[test]
     fn install_hooks_with_tool_call_handler() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(BlockBashExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions, test_session_manager());
+        let runner = ExtensionRunner::from_extensions(&extensions);
 
         let mut options = ameli_agent_core::AgentOptions::default();
         runner.install_hooks(&mut options);
@@ -1712,7 +1677,7 @@ mod tests {
     #[test]
     fn install_hooks_with_context_handler() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(ContextTransformExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions, test_session_manager());
+        let runner = ExtensionRunner::from_extensions(&extensions);
 
         let mut options = ameli_agent_core::AgentOptions::default();
         runner.install_hooks(&mut options);
@@ -1725,7 +1690,7 @@ mod tests {
     #[test]
     fn install_hooks_with_tool_result_handler() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(ToolResultModifierExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions, test_session_manager());
+        let runner = ExtensionRunner::from_extensions(&extensions);
 
         let mut options = ameli_agent_core::AgentOptions::default();
         runner.install_hooks(&mut options);
@@ -1737,7 +1702,7 @@ mod tests {
 
     #[test]
     fn install_hooks_skips_when_no_handlers() {
-        let runner = ExtensionRunner::from_extensions(&[], test_session_manager());
+        let runner = ExtensionRunner::from_extensions(&[]);
 
         let mut options = ameli_agent_core::AgentOptions::default();
         runner.install_hooks(&mut options);
@@ -1752,7 +1717,7 @@ mod tests {
     #[tokio::test]
     async fn before_tool_call_blocks_bash() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(BlockBashExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions, test_session_manager());
+        let runner = ExtensionRunner::from_extensions(&extensions);
 
         let ctx = BeforeToolCallContext {
             assistant_message: AssistantMessage {
@@ -1793,7 +1758,7 @@ mod tests {
     #[tokio::test]
     async fn before_tool_call_allows_other_tools() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(BlockBashExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions, test_session_manager());
+        let runner = ExtensionRunner::from_extensions(&extensions);
 
         let ctx = BeforeToolCallContext {
             assistant_message: AssistantMessage {
@@ -1831,7 +1796,7 @@ mod tests {
     #[tokio::test]
     async fn after_tool_call_modifies_result() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(ToolResultModifierExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions, test_session_manager());
+        let runner = ExtensionRunner::from_extensions(&extensions);
 
         let ctx = AfterToolCallContext {
             assistant_message: AssistantMessage {
@@ -1879,7 +1844,7 @@ mod tests {
     #[tokio::test]
     async fn context_transform_filters_messages() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(ContextTransformExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions, test_session_manager());
+        let runner = ExtensionRunner::from_extensions(&extensions);
 
         let messages = vec![
             AgentMessage::User(ameli_ai::types::UserMessage::text("hello")),
@@ -1895,7 +1860,7 @@ mod tests {
     #[tokio::test]
     async fn format_compaction_summary_custom() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(CompactionFormatExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions, test_session_manager());
+        let runner = ExtensionRunner::from_extensions(&extensions);
 
         let result = runner
             .emit_format_compaction_summary("old conversation", 1000, CancellationToken::new())
@@ -1917,7 +1882,7 @@ mod tests {
 
     #[tokio::test]
     async fn format_compaction_summary_default_when_no_handlers() {
-        let runner = ExtensionRunner::from_extensions(&[], test_session_manager());
+        let runner = ExtensionRunner::from_extensions(&[]);
         let result = runner
             .emit_format_compaction_summary("summary", 1000, CancellationToken::new())
             .await;
@@ -1929,7 +1894,7 @@ mod tests {
     #[tokio::test]
     async fn before_agent_start_override() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(BeforeAgentStartOverrideExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions, test_session_manager());
+        let runner = ExtensionRunner::from_extensions(&extensions);
 
         let result = runner
             .emit_before_agent_start("hello", &[], &[], "original", CancellationToken::new())
@@ -1944,7 +1909,7 @@ mod tests {
     #[tokio::test]
     async fn message_end_replaces() {
         let extensions: Vec<Box<dyn Extension>> = vec![Box::new(MessageEndReplaceExtension)];
-        let runner = ExtensionRunner::from_extensions(&extensions, test_session_manager());
+        let runner = ExtensionRunner::from_extensions(&extensions);
 
         let event = MessageEndEvent {
             message: AgentMessage::User(ameli_ai::types::UserMessage::text("hello")),
@@ -1960,15 +1925,13 @@ mod tests {
 
     #[tokio::test]
     async fn session_start_dispatches() {
-        let runner =
-            ExtensionRunner::from_extensions(&[Box::new(LoggingExtension)], test_session_manager());
+        let runner = ExtensionRunner::from_extensions(&[Box::new(LoggingExtension)]);
         runner.emit_session_start(SessionStartReason::Startup).await;
     }
 
     #[tokio::test]
     async fn session_shutdown_dispatches() {
-        let runner =
-            ExtensionRunner::from_extensions(&[Box::new(LoggingExtension)], test_session_manager());
+        let runner = ExtensionRunner::from_extensions(&[Box::new(LoggingExtension)]);
         let handled = runner
             .emit_session_shutdown(SessionShutdownReason::Quit)
             .await;
@@ -1977,7 +1940,7 @@ mod tests {
 
     #[tokio::test]
     async fn session_shutdown_returns_false_when_no_handlers() {
-        let runner = ExtensionRunner::from_extensions(&[], test_session_manager());
+        let runner = ExtensionRunner::from_extensions(&[]);
         let handled = runner
             .emit_session_shutdown(SessionShutdownReason::Quit)
             .await;
@@ -1988,8 +1951,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_command_dispatches() {
-        let runner =
-            ExtensionRunner::from_extensions(&[Box::new(CommandExtension)], test_session_manager());
+        let runner = ExtensionRunner::from_extensions(&[Box::new(CommandExtension)]);
         let ctx = CommandContext {
             extension_context: ExtensionContext::for_testing(),
         };
@@ -1999,7 +1961,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_command_unknown_fails() {
-        let runner = ExtensionRunner::from_extensions(&[], test_session_manager());
+        let runner = ExtensionRunner::from_extensions(&[]);
         let ctx = CommandContext {
             extension_context: ExtensionContext::for_testing(),
         };
@@ -2038,12 +2000,10 @@ mod tests {
             }
         }
 
-        let runner = ExtensionRunner::from_extensions(
-            &[Box::new(FailingThenSucceedingExtension {
+        let runner =
+            ExtensionRunner::from_extensions(&[Box::new(FailingThenSucceedingExtension {
                 ran_flag: second_handler_ran.clone(),
-            })],
-            test_session_manager(),
-        );
+            })]);
 
         let error_flag = error_received.clone();
         runner.on_error(Arc::new(move |err| {
@@ -2094,12 +2054,9 @@ mod tests {
             }
         }
 
-        let runner = ExtensionRunner::from_extensions(
-            &[Box::new(AgentStartCountingExtension {
-                count: call_count.clone(),
-            })],
-            test_session_manager(),
-        );
+        let runner = ExtensionRunner::from_extensions(&[Box::new(AgentStartCountingExtension {
+            count: call_count.clone(),
+        })]);
 
         // Dispatch via the public routing method, not the private dispatch_agent_start
         runner
@@ -2116,7 +2073,7 @@ mod tests {
 
     #[test]
     fn empty_runner_has_no_handlers() {
-        let runner = ExtensionRunner::empty(noop_interface(), test_session_manager());
+        let runner = ExtensionRunner::empty(noop_interface());
         assert!(!runner.has_any_handlers());
         assert!(runner.get_registered_tools().is_empty());
         assert!(runner.get_registered_commands().is_empty());
@@ -2126,13 +2083,13 @@ mod tests {
 
     #[test]
     fn has_custom_message_formatters_false_when_empty() {
-        let runner = ExtensionRunner::empty(noop_interface(), test_session_manager());
+        let runner = ExtensionRunner::empty(noop_interface());
         assert!(!runner.has_custom_message_formatters());
     }
 
     #[test]
     fn format_custom_message_returns_none_when_no_formatter() {
-        let runner = ExtensionRunner::empty(noop_interface(), test_session_manager());
+        let runner = ExtensionRunner::empty(noop_interface());
         let result =
             runner.format_custom_message("instruction", &serde_json::json!({"msg": "hello"}));
         assert!(result.is_none());
@@ -2154,10 +2111,7 @@ mod tests {
             }
         }
 
-        let runner = ExtensionRunner::from_extensions(
-            &[Box::new(InstructionFormatter)],
-            test_session_manager(),
-        );
+        let runner = ExtensionRunner::from_extensions(&[Box::new(InstructionFormatter)]);
         assert!(runner.has_custom_message_formatters());
 
         let result = runner.format_custom_message(
@@ -2189,10 +2143,7 @@ mod tests {
             }
         }
 
-        let runner = ExtensionRunner::from_extensions(
-            &[Box::new(InstructionFormatter)],
-            test_session_manager(),
-        );
+        let runner = ExtensionRunner::from_extensions(&[Box::new(InstructionFormatter)]);
         let result = runner.format_custom_message("context", &serde_json::json!(null));
         assert!(result.is_none());
     }
@@ -2221,10 +2172,10 @@ mod tests {
             }
         }
 
-        let runner = ExtensionRunner::from_extensions(
-            &[Box::new(FirstFormatter), Box::new(SecondFormatter)],
-            test_session_manager(),
-        );
+        let runner = ExtensionRunner::from_extensions(&[
+            Box::new(FirstFormatter),
+            Box::new(SecondFormatter),
+        ]);
         let result = runner.format_custom_message("instruction", &serde_json::json!(null));
         assert!(result.is_some());
         match result.unwrap() {
@@ -2254,10 +2205,7 @@ mod tests {
             }
         }
 
-        let runner = ExtensionRunner::from_extensions(
-            &[Box::new(InstructionFormatter)],
-            test_session_manager(),
-        );
+        let runner = ExtensionRunner::from_extensions(&[Box::new(InstructionFormatter)]);
 
         let original: Arc<ameli_agent_core::agent::ConvertToLlmFn> = Arc::new(|messages| {
             let msgs = messages.to_vec();
@@ -2320,7 +2268,7 @@ mod tests {
     async fn handle_convert_to_llm_skips_unhandled_custom_messages() {
         use ameli_agent_core::types::{AgentMessage, CustomMessage};
 
-        let runner = ExtensionRunner::from_extensions(&[], test_session_manager());
+        let runner = ExtensionRunner::from_extensions(&[]);
 
         let original: Arc<ameli_agent_core::agent::ConvertToLlmFn> = Arc::new(|messages| {
             let msgs = messages.to_vec();
@@ -2374,10 +2322,7 @@ mod tests {
             }
         }
 
-        let runner = ExtensionRunner::from_extensions(
-            &[Box::new(InstructionFormatter)],
-            test_session_manager(),
-        );
+        let runner = ExtensionRunner::from_extensions(&[Box::new(InstructionFormatter)]);
 
         let mut options = ameli_agent_core::AgentOptions::default();
         // Store the original to verify it gets replaced
@@ -2386,78 +2331,5 @@ mod tests {
 
         // convert_to_llm should now be Some (wrapped)
         assert!(options.convert_to_llm.is_some());
-    }
-
-    // -- append_custom_entry tests ------------------------------------------
-
-    #[tokio::test]
-    async fn append_custom_entry_delegates_to_session_manager() {
-        let sm = test_session_manager();
-        let runner = ExtensionRunner::empty(noop_interface(), sm.clone());
-
-        let entry_id = runner
-            .append_custom_entry("my_type", Some(serde_json::json!({"key": "value"})))
-            .await
-            .unwrap();
-
-        assert!(!entry_id.is_empty(), "entry ID should not be empty");
-
-        // Verify the entry was persisted
-        let entries = sm.entries().await.unwrap();
-        assert_eq!(entries.len(), 1);
-        match &entries[0] {
-            crate::session_manager::types::SessionEntry::Custom(ce) => {
-                assert_eq!(ce.custom_type, "my_type");
-                assert_eq!(ce.data, Some(serde_json::json!({"key": "value"})));
-            }
-            other => panic!("Expected Custom entry, got {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn append_custom_entry_with_none_data() {
-        let sm = test_session_manager();
-        let runner = ExtensionRunner::empty(noop_interface(), sm.clone());
-
-        let entry_id = runner.append_custom_entry("simple", None).await.unwrap();
-
-        assert!(!entry_id.is_empty());
-
-        let entries = sm.entries().await.unwrap();
-        assert_eq!(entries.len(), 1);
-        match &entries[0] {
-            crate::session_manager::types::SessionEntry::Custom(ce) => {
-                assert_eq!(ce.custom_type, "simple");
-                assert!(ce.data.is_none());
-            }
-            other => panic!("Expected Custom entry, got {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn append_custom_entry_reports_error_to_listeners() {
-        use std::sync::atomic::{AtomicBool, Ordering};
-
-        // Use a real InMemorySessionManager — it doesn't fail, so we test
-        // the error listener wiring by confirming the success path does NOT
-        // report an error.
-        let sm = test_session_manager();
-        let runner = ExtensionRunner::empty(noop_interface(), sm.clone());
-
-        let error_received = Arc::new(AtomicBool::new(false));
-        let error_flag = error_received.clone();
-        runner.on_error(Arc::new(move |_err| {
-            error_flag.store(true, Ordering::SeqCst);
-        }));
-
-        let result = runner
-            .append_custom_entry("test", Some(serde_json::json!("data")))
-            .await;
-
-        assert!(result.is_ok());
-        assert!(
-            !error_received.load(Ordering::SeqCst),
-            "no error should be reported on success"
-        );
     }
 }

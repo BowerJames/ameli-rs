@@ -21,7 +21,7 @@
 //! ```no_run
 //! use ameli_agent::{
 //!     AgentSession, AgentSessionConfig,
-//!     ExtensionRunner, NoopInterface,
+//!     ExtensionRunner, ExtensionActions, NoopInterface,
 //! };
 //! use ameli_agent::session_manager::{SessionManager, InMemorySessionManager};
 //! use ameli_agent_core::ArcAgent;
@@ -31,11 +31,13 @@
 //!     agent: ArcAgent,
 //!     session: Arc<InMemorySessionManager>,
 //!     runner: Arc<ExtensionRunner>,
+//!     actions: Arc<ExtensionActions>,
 //! ) -> AgentSession {
 //!     let config = AgentSessionConfig {
 //!         agent,
 //!         session_manager: session,
 //!         runner,
+//!         actions,
 //!         interface: Arc::new(NoopInterface),
 //!     };
 //!     AgentSession::new(config).await
@@ -44,8 +46,9 @@
 
 use crate::auth_storage::AuthStorage;
 use crate::error::CreateAgentSessionError;
-use crate::extension::{init_extensions, Extension};
-use crate::extension::{ExtensionContext, ExtensionRunner};
+use crate::extension::{
+    init_extensions, Extension, ExtensionActions, ExtensionContext, ExtensionRunner,
+};
 use crate::interface::Interface;
 use crate::session_manager::{ModelRef, SessionContext, SessionManager, SessionMessage};
 use ameli_agent_core::types::{AgentEvent, AgentMessage, AgentState, CustomMessage, ThinkingLevel};
@@ -69,6 +72,8 @@ pub struct AgentSessionConfig {
     pub session_manager: Arc<dyn SessionManager>,
     /// Extension runner with registered handlers.
     pub runner: Arc<ExtensionRunner>,
+    /// Extension actions for runtime operations.
+    pub actions: Arc<ExtensionActions>,
     /// UI interface for notifications.
     pub interface: Arc<dyn Interface>,
 }
@@ -91,6 +96,8 @@ pub struct AgentSession {
     agent: ArcAgent,
     session_manager: Arc<dyn SessionManager>,
     runner: Arc<ExtensionRunner>,
+    /// Extension actions — kept alive so Weak<Agent> remains valid.
+    _actions: Arc<ExtensionActions>,
     interface: Arc<dyn Interface>,
     _subscription: Subscription,
 }
@@ -162,6 +169,7 @@ impl AgentSession {
         let agent = config.agent;
         let session_manager = config.session_manager;
         let runner = config.runner;
+        let actions = config.actions;
         let interface = config.interface;
 
         // Subscribe to agent events for extension dispatch and persistence.
@@ -186,6 +194,7 @@ impl AgentSession {
             agent,
             session_manager,
             runner,
+            _actions: actions,
             interface,
             _subscription: subscription,
         }
@@ -631,11 +640,9 @@ pub async fn create_agent_session(
         })?;
 
     // 3. Initialize extensions.
-    let runner = Arc::new(ExtensionRunner::empty(
-        options.interface.clone(),
-        options.session_manager.clone(),
-    ));
-    init_extensions(&options.extensions, &runner);
+    let runner = Arc::new(ExtensionRunner::empty(options.interface.clone()));
+    let actions = Arc::new(ExtensionActions::new(options.session_manager.clone()));
+    init_extensions(&options.extensions, &runner, &actions);
 
     // 4. Build AgentOptions.
     let thinking_level = options.thinking_level.unwrap_or(ThinkingLevel::Off);
@@ -669,11 +676,15 @@ pub async fn create_agent_session(
     // 6. Construct ArcAgent.
     let agent = ArcAgent::new(agent_options);
 
-    // 7. Construct AgentSession.
+    // 7. Wire ExtensionActions to the agent.
+    actions.set_agent(agent.agent());
+
+    // 8. Construct AgentSession.
     let session = AgentSession::new(AgentSessionConfig {
         agent,
         session_manager: options.session_manager.clone(),
         runner: runner.clone(),
+        actions,
         interface: options.interface.clone(),
     })
     .await;
@@ -715,7 +726,7 @@ pub async fn create_agent_session(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::extension::{Extension, ExtensionApi};
+    use crate::extension::{Extension, ExtensionActions, ExtensionApi};
     use crate::interface::NoopInterface;
     use crate::session_manager::{InMemorySessionManager, SessionEntry};
     use ameli_ai::types::{Cost, InputType, Model};
@@ -762,14 +773,15 @@ mod tests {
 
     async fn test_session(agent: ArcAgent) -> AgentSession {
         let session_manager = Arc::new(InMemorySessionManager::new());
-        let runner = ExtensionRunner::from_extensions(
-            &[Box::new(NoCommandsExtension)],
-            session_manager.clone(),
-        );
+        let runner = Arc::new(ExtensionRunner::empty(Arc::new(NoopInterface)));
+        let actions = Arc::new(ExtensionActions::new(session_manager.clone()));
+        actions.set_agent(agent.agent());
+        crate::extension::init_extensions(&[Box::new(NoCommandsExtension)], &runner, &actions);
         AgentSession::new(AgentSessionConfig {
             agent,
             session_manager,
             runner,
+            actions,
             interface: Arc::new(NoopInterface),
         })
         .await
@@ -1034,7 +1046,7 @@ mod tests {
     #[tokio::test]
     async fn handle_agent_event_persists_message_end() {
         let sm: Arc<dyn SessionManager> = Arc::new(InMemorySessionManager::new());
-        let runner = ExtensionRunner::from_extensions(&[], sm.clone());
+        let runner = ExtensionRunner::from_extensions(&[]);
 
         let event = AgentEvent::MessageEnd {
             message: AgentMessage::User(ameli_ai::types::UserMessage::text("hello")),
