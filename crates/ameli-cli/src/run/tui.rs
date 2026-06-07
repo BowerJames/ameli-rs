@@ -6,7 +6,6 @@
 //! commands, or steering messages.
 
 use ameli_agent::interface::{Interface, NotifyKind, NotifyMessage};
-use ameli_agent::session_manager::InMemoryMetadata;
 use ameli_agent::AgentSession;
 use ameli_agent_core::types::{AgentEvent, AgentMessage};
 use ameli_ai::types::{AssistantContentBlock, AssistantMessageEvent, TextContent, UserMessage};
@@ -133,7 +132,7 @@ impl TuiState {
 /// `notify_rx` receives [`NotifyMessage`]s forwarded by [`TuiInterface`] and
 /// renders them in the chat log.
 pub async fn run(
-    session: Arc<AgentSession<InMemoryMetadata>>,
+    session: Arc<AgentSession>,
     mut notify_rx: mpsc::UnboundedReceiver<NotifyMessage>,
 ) -> Result<()> {
     // 1. Set up terminal
@@ -351,7 +350,7 @@ fn handle_agent_event(event: AgentEvent, state: &mut TuiState) {
 fn handle_key(
     key: KeyEvent,
     state: &mut TuiState,
-    session: &Arc<AgentSession<InMemoryMetadata>>,
+    session: &Arc<AgentSession>,
     error_tx: &mpsc::UnboundedSender<String>,
 ) {
     // Handle Ctrl+C before the key.code match, because Ctrl+C produces

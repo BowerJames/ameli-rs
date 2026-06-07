@@ -23,21 +23,15 @@
 //!     AgentSession, AgentSessionConfig,
 //!     ExtensionRunner, NoopInterface,
 //! };
-//! use ameli_agent::session_manager::{SessionManager, SessionMetadata};
+//! use ameli_agent::session_manager::{SessionManager, InMemorySessionManager};
 //! use ameli_agent_core::ArcAgent;
 //! use std::sync::Arc;
 //!
-//! struct MyMetadata { id: String, created_at: String }
-//! impl SessionMetadata for MyMetadata {
-//!     fn id(&self) -> &str { &self.id }
-//!     fn created_at(&self) -> &str { &self.created_at }
-//! }
-//!
 //! async fn example(
 //!     agent: ArcAgent,
-//!     session: Arc<dyn SessionManager<MyMetadata>>,
+//!     session: Arc<InMemorySessionManager>,
 //!     runner: Arc<ExtensionRunner>,
-//! ) -> AgentSession<MyMetadata> {
+//! ) -> AgentSession {
 //!     let config = AgentSessionConfig {
 //!         agent,
 //!         session_manager: session,
@@ -53,9 +47,7 @@ use crate::error::CreateAgentSessionError;
 use crate::extension::{init_extensions, Extension};
 use crate::extension::{ExtensionContext, ExtensionRunner};
 use crate::interface::Interface;
-use crate::session_manager::{
-    ModelRef, SessionContext, SessionManager, SessionMessage, SessionMetadata,
-};
+use crate::session_manager::{ModelRef, SessionContext, SessionManager, SessionMessage};
 use ameli_agent_core::types::{AgentEvent, AgentMessage, AgentState, CustomMessage, ThinkingLevel};
 use ameli_agent_core::{AgentOptions, ArcAgent, Subscription};
 use ameli_ai::types::{AudioContent, ImageContent, MediaContentBlock, TextContent};
@@ -70,11 +62,11 @@ use tokio_util::sync::CancellationToken;
 // ---------------------------------------------------------------------------
 
 /// Configuration for constructing an [`AgentSession`].
-pub struct AgentSessionConfig<M: SessionMetadata> {
+pub struct AgentSessionConfig {
     /// The stateful agent that drives the LLM loop.
     pub agent: ArcAgent,
     /// Session storage backend.
-    pub session_manager: Arc<dyn SessionManager<M>>,
+    pub session_manager: Arc<dyn SessionManager>,
     /// Extension runner with registered handlers.
     pub runner: Arc<ExtensionRunner>,
     /// UI interface for notifications.
@@ -95,9 +87,9 @@ pub struct AgentSessionConfig<M: SessionMetadata> {
 /// - It subscribes to agent events to persist messages to the session tree.
 /// - It converts compaction and branch summary entries using extension hooks.
 /// - It dispatches commands to registered extension handlers.
-pub struct AgentSession<M: SessionMetadata> {
+pub struct AgentSession {
     agent: ArcAgent,
-    session_manager: Arc<dyn SessionManager<M>>,
+    session_manager: Arc<dyn SessionManager>,
     runner: Arc<ExtensionRunner>,
     interface: Arc<dyn Interface>,
     _subscription: Subscription,
@@ -109,9 +101,9 @@ pub struct AgentSession<M: SessionMetadata> {
 
 /// Handle an [`AgentEvent`] from the agent: dispatch extension notifications
 /// and persist messages to the session.
-async fn handle_agent_event<M: SessionMetadata>(
+async fn handle_agent_event(
     event: AgentEvent,
-    session_manager: &Arc<dyn SessionManager<M>>,
+    session_manager: &Arc<dyn SessionManager>,
     runner: &Arc<ExtensionRunner>,
     cancel: CancellationToken,
 ) {
@@ -138,10 +130,7 @@ async fn handle_agent_event<M: SessionMetadata>(
 }
 
 /// Persist a finalized message to the session tree.
-async fn persist_message<M: SessionMetadata>(
-    message: &AgentMessage,
-    session_manager: &Arc<dyn SessionManager<M>>,
-) {
+async fn persist_message(message: &AgentMessage, session_manager: &Arc<dyn SessionManager>) {
     match message {
         AgentMessage::User(_) | AgentMessage::Assistant(_) | AgentMessage::ToolResult(_) => {
             if let Err(e) = session_manager.append_message(message.clone()).await {
@@ -164,12 +153,12 @@ async fn persist_message<M: SessionMetadata>(
     }
 }
 
-impl<M: SessionMetadata> AgentSession<M> {
+impl AgentSession {
     /// Create a new agent session.
     ///
     /// Restores session state from the session manager, subscribes to agent
     /// events for persistence, and emits `session_start` to extensions.
-    pub async fn new(config: AgentSessionConfig<M>) -> Self {
+    pub async fn new(config: AgentSessionConfig) -> Self {
         let agent = config.agent;
         let session_manager = config.session_manager;
         let runner = config.runner;
@@ -212,7 +201,7 @@ impl<M: SessionMetadata> AgentSession<M> {
     }
 
     /// Get a reference to the session manager.
-    pub fn session_manager(&self) -> &Arc<dyn SessionManager<M>> {
+    pub fn session_manager(&self) -> &Arc<dyn SessionManager> {
         &self.session_manager
     }
 
@@ -425,7 +414,7 @@ impl<M: SessionMetadata> AgentSession<M> {
     }
 }
 
-impl<M: SessionMetadata> fmt::Debug for AgentSession<M> {
+impl fmt::Debug for AgentSession {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AgentSession")
             .field("agent", &self.agent)
@@ -532,9 +521,8 @@ fn branch_summary_to_agent_message(summary: &str, timestamp: u64) -> AgentMessag
 /// Inputs for [`create_agent_session`].
 ///
 /// Collects all dependencies needed to construct a fully loaded, idle
-/// [`AgentSession`]. The generic parameter `M` is the session metadata type
-/// defined by the downstream application's storage backend.
-pub struct CreateAgentSessionOptions<M: SessionMetadata> {
+/// [`AgentSession`].
+pub struct CreateAgentSessionOptions {
     /// Which model to use. Resolved to a full [`Model`] via `model_registry`.
     pub model: ModelRef,
     /// Model registry for resolving [`ModelRef`] → [`Model`].
@@ -542,7 +530,7 @@ pub struct CreateAgentSessionOptions<M: SessionMetadata> {
     /// Auth storage for resolving API keys at stream time.
     pub auth_storage: Arc<dyn AuthStorage>,
     /// Session storage backend.
-    pub session_manager: Arc<dyn SessionManager<M>>,
+    pub session_manager: Arc<dyn SessionManager>,
     /// UI interface for notifications.
     pub interface: Arc<dyn Interface>,
     /// Extensions to register.
@@ -557,14 +545,14 @@ pub struct CreateAgentSessionOptions<M: SessionMetadata> {
 ///
 /// The returned session is fully loaded and idle — ready for
 /// [`prompt`](AgentSession::prompt) or [`continue_`](AgentSession::continue_).
-pub struct CreateAgentSessionResult<M: SessionMetadata> {
+pub struct CreateAgentSessionResult {
     /// The created session.
-    pub session: AgentSession<M>,
+    pub session: AgentSession,
     /// Non-fatal warnings collected during session creation.
     pub warnings: Vec<String>,
 }
 
-impl<M: SessionMetadata> fmt::Debug for CreateAgentSessionResult<M> {
+impl fmt::Debug for CreateAgentSessionResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("CreateAgentSessionResult")
             .field("session", &self.session)
@@ -600,7 +588,7 @@ impl<M: SessionMetadata> fmt::Debug for CreateAgentSessionResult<M> {
 /// use ameli_agent::{
 ///     create_agent_session, CreateAgentSessionOptions, NoopInterface,
 /// };
-/// use ameli_agent::session_manager::{SessionManager, SessionMetadata, InMemorySessionManager, ModelRef};
+/// use ameli_agent::session_manager::{InMemorySessionManager, ModelRef};
 /// use ameli_agent::auth_storage::InMemoryAuthStorage;
 /// use ameli_model_registry::DefaultModelRegistry;
 /// use std::sync::Arc;
@@ -625,9 +613,9 @@ impl<M: SessionMetadata> fmt::Debug for CreateAgentSessionResult<M> {
 ///     Ok(())
 /// }
 /// ```
-pub async fn create_agent_session<M: SessionMetadata>(
-    options: CreateAgentSessionOptions<M>,
-) -> Result<CreateAgentSessionResult<M>, CreateAgentSessionError> {
+pub async fn create_agent_session(
+    options: CreateAgentSessionOptions,
+) -> Result<CreateAgentSessionResult, CreateAgentSessionError> {
     // 1. Resolve ModelRef → Model via the registry.
     let model = options
         .model_registry
@@ -726,7 +714,7 @@ mod tests {
     use super::*;
     use crate::extension::{Extension, ExtensionApi};
     use crate::interface::NoopInterface;
-    use crate::session_manager::{InMemoryMetadata, InMemorySessionManager, SessionEntry};
+    use crate::session_manager::{InMemorySessionManager, SessionEntry};
     use ameli_ai::types::{Cost, InputType, Model};
 
     fn test_model() -> Model {
@@ -769,7 +757,7 @@ mod tests {
         fn init(&self, _api: &Arc<ExtensionApi>) {}
     }
 
-    async fn test_session(agent: ArcAgent) -> AgentSession<InMemoryMetadata> {
+    async fn test_session(agent: ArcAgent) -> AgentSession {
         let session_manager = Arc::new(InMemorySessionManager::new());
         let runner = ExtensionRunner::from_extensions(&[Box::new(NoCommandsExtension)]);
         AgentSession::new(AgentSessionConfig {
@@ -1001,7 +989,7 @@ mod tests {
 
     #[tokio::test]
     async fn persist_standard_message_appends_to_session() {
-        let sm: Arc<dyn SessionManager<InMemoryMetadata>> = Arc::new(InMemorySessionManager::new());
+        let sm: Arc<dyn SessionManager> = Arc::new(InMemorySessionManager::new());
 
         let msg = AgentMessage::User(ameli_ai::types::UserMessage::text("hello"));
         persist_message(&msg, &sm).await;
@@ -1017,7 +1005,7 @@ mod tests {
 
     #[tokio::test]
     async fn persist_custom_message_appends_to_session() {
-        let sm: Arc<dyn SessionManager<InMemoryMetadata>> = Arc::new(InMemorySessionManager::new());
+        let sm: Arc<dyn SessionManager> = Arc::new(InMemorySessionManager::new());
 
         let msg = custom_data_to_agent_message(
             "context",
@@ -1039,7 +1027,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_agent_event_persists_message_end() {
-        let sm: Arc<dyn SessionManager<InMemoryMetadata>> = Arc::new(InMemorySessionManager::new());
+        let sm: Arc<dyn SessionManager> = Arc::new(InMemorySessionManager::new());
         let runner = ExtensionRunner::from_extensions(&[]);
 
         let event = AgentEvent::MessageEnd {

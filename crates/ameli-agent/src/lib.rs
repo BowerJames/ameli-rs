@@ -7,12 +7,12 @@
 //! # Architecture
 //!
 //! ```text
-//! AgentSession<M>              ← composition layer
-//!     ├── ArcAgent             ← stateful agent (from ameli-agent-core)
-//!     ├── SessionManager<M>    ← session persistence trait (session_manager module)
-//!     ├── AuthStorage          ← API key resolution (auth_storage module)
-//!     ├── ExtensionRunner      ← extension event dispatch
-//!     └── Interface            ← minimal UI abstraction
+//! AgentSession                ← composition layer
+//!     ├── ArcAgent            ← stateful agent (from ameli-agent-core)
+//!     ├── SessionManager      ← session persistence trait (session_manager module)
+//!     ├── AuthStorage         ← API key resolution (auth_storage module)
+//!     ├── ExtensionRunner     ← extension event dispatch
+//!     └── Interface           ← minimal UI abstraction
 //! ```
 //!
 //! # Session Management
@@ -20,8 +20,8 @@
 //! The session system is built around two core abstractions in the
 //! [`session_manager`] module:
 //!
-//! - [`session_manager::SessionMetadata`] — trait for session identity
-//!   (ID, creation time). Different backends extend this with their own fields.
+//! - [`session_manager::SessionMetadata`] — concrete struct for session identity
+//!   (ID, creation time).
 //! - [`session_manager::SessionManager`] — trait for session operations.
 //!   Implementations decide their own ID generation, persistence strategy, and internals.
 //!

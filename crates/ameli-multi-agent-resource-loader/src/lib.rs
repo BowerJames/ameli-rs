@@ -1,6 +1,6 @@
 //! Multi-agent resource loader — trait for loading agent session resources.
 //!
-//! This crate defines [`MultiAgentResourceLoader<M>`] — a trait that
+//! This crate defines [`MultiAgentResourceLoader`] — a trait that
 //! implementations use to create sessions and load the resources needed to
 //! construct an [`AgentSession`](ameli_agent::AgentSession). The consumer
 //! combines the returned [`AgentSessionResources`] with their own
@@ -10,12 +10,12 @@
 //! # Architecture
 //!
 //! ```text
-//! MultiAgentResourceLoader<M>     ← trait (this crate)
+//! MultiAgentResourceLoader       ← trait (this crate)
 //!     ├── create_session()       → session_id
-//!     └── load_resources()       → AgentSessionResources<M>
+//!     └── load_resources()       → AgentSessionResources
 //!
-//! AgentSessionResources<M>        ← data bundle
-//!     ├── SessionManager<M>      ← session persistence
+//! AgentSessionResources          ← data bundle
+//!     ├── SessionManager         ← session persistence
 //!     ├── AuthStorage            ← API key resolution
 //!     ├── Extensions             ← extension instances
 //!     ├── ModelRef               ← model selection
@@ -37,8 +37,6 @@
 //!   registry instance.
 //! - **No `system_prompt`** — the consumer determines the system prompt per
 //!   session.
-//! - **Generic over `M: SessionMetadata`** — different storage backends carry
-//!   different metadata types.
 //! - **No concrete implementations** — implementations live in downstream
 //!   crates (e.g., a future `ameli-multi-agent-postgres`).
 
@@ -47,7 +45,7 @@ pub mod error;
 // Imports that serve double duty: available internally and re-exported.
 pub use ameli_agent::auth_storage::AuthStorage;
 pub use ameli_agent::extension::Extension;
-pub use ameli_agent::session_manager::{ModelRef, SessionManager, SessionMetadata};
+pub use ameli_agent::session_manager::{ModelRef, SessionManager};
 pub use ameli_agent_core::types::ThinkingLevel;
 pub use error::{CreateSessionError, LoadResourcesError};
 use std::fmt;
@@ -62,7 +60,7 @@ use std::sync::Arc;
 /// Boxed, sendable async result.
 ///
 /// Using `Pin<Box<dyn Future>>` ensures the trait is dyn-compatible
-/// (object-safe), so `Arc<dyn MultiAgentResourceLoader<M>>` works.
+/// (object-safe), so `Arc<dyn MultiAgentResourceLoader>` works.
 pub type AsyncResult<T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send>>;
 
 // ---------------------------------------------------------------------------
@@ -74,14 +72,9 @@ pub type AsyncResult<T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send>>;
 /// Returned by [`MultiAgentResourceLoader::load_resources`]. The consumer
 /// combines these with their own `Interface`, `ModelRegistry`, and system
 /// prompt to call [`create_agent_session()`](ameli_agent::create_agent_session).
-///
-/// # Type Parameter
-///
-/// `M` is the session metadata type defined by the storage backend. See
-/// [`SessionMetadata`].
-pub struct AgentSessionResources<M: SessionMetadata> {
+pub struct AgentSessionResources {
     /// Session storage backend.
-    pub session_manager: Arc<dyn SessionManager<M>>,
+    pub session_manager: Arc<dyn SessionManager>,
     /// API key resolution for the model's provider.
     pub auth_storage: Arc<dyn AuthStorage>,
     /// Extension instances to register with the agent.
@@ -96,13 +89,10 @@ pub struct AgentSessionResources<M: SessionMetadata> {
     pub thinking_level: ThinkingLevel,
 }
 
-impl<M: SessionMetadata> fmt::Debug for AgentSessionResources<M> {
+impl fmt::Debug for AgentSessionResources {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AgentSessionResources")
-            .field(
-                "session_manager",
-                &format_args!("Arc<dyn SessionManager<{}>>", std::any::type_name::<M>()),
-            )
+            .field("session_manager", &format_args!("Arc<dyn SessionManager>"))
             .field("auth_storage", &format_args!("Arc<dyn AuthStorage>"))
             .field("extensions", &self.extensions.len())
             .field("model", &self.model)
@@ -122,13 +112,9 @@ impl<M: SessionMetadata> fmt::Debug for AgentSessionResources<M> {
 /// combines these with their own `Interface`, `ModelRegistry`, and system
 /// prompt.
 ///
-/// # Type Parameter
-///
-/// `M` is the session metadata type defined by the storage backend.
-///
 /// # Object Safety
 ///
-/// The trait is dyn-compatible so that `Arc<dyn MultiAgentResourceLoader<M>>`
+/// The trait is dyn-compatible so that `Arc<dyn MultiAgentResourceLoader>`
 /// works. All async methods return [`AsyncResult`] (boxed, pinned futures).
 ///
 /// # Examples
@@ -137,12 +123,12 @@ impl<M: SessionMetadata> fmt::Debug for AgentSessionResources<M> {
 /// use ameli_multi_agent_resource_loader::{
 ///     MultiAgentResourceLoader, AgentSessionResources, AsyncResult,
 /// };
-/// use ameli_agent::session_manager::{SessionMetadata, SessionManager, ModelRef};
+/// use ameli_agent::session_manager::{SessionManager, ModelRef};
 /// use std::sync::Arc;
 ///
 /// struct MyLoader;
 ///
-/// impl<M: SessionMetadata> MultiAgentResourceLoader<M> for MyLoader {
+/// impl MultiAgentResourceLoader for MyLoader {
 ///     fn create_session(&self, agent_id: &str) -> AsyncResult<String, ameli_multi_agent_resource_loader::CreateSessionError> {
 ///         let agent_id = agent_id.to_string();
 ///         Box::pin(async move {
@@ -151,7 +137,7 @@ impl<M: SessionMetadata> fmt::Debug for AgentSessionResources<M> {
 ///         })
 ///     }
 ///
-///     fn load_resources(&self, session_id: &str) -> AsyncResult<AgentSessionResources<M>, ameli_multi_agent_resource_loader::LoadResourcesError> {
+///     fn load_resources(&self, session_id: &str) -> AsyncResult<AgentSessionResources, ameli_multi_agent_resource_loader::LoadResourcesError> {
 ///         // Load resources for the session
 ///         let session_id = session_id.to_string();
 ///         Box::pin(async move {
@@ -160,7 +146,7 @@ impl<M: SessionMetadata> fmt::Debug for AgentSessionResources<M> {
 ///     }
 /// }
 /// ```
-pub trait MultiAgentResourceLoader<M: SessionMetadata>: Send + Sync {
+pub trait MultiAgentResourceLoader: Send + Sync {
     /// Create a new session for the given agent and return its session ID.
     ///
     /// The implementation handles all storage-level session creation (e.g.,
@@ -190,7 +176,7 @@ pub trait MultiAgentResourceLoader<M: SessionMetadata>: Send + Sync {
     fn load_resources(
         &self,
         session_id: &str,
-    ) -> AsyncResult<AgentSessionResources<M>, LoadResourcesError>;
+    ) -> AsyncResult<AgentSessionResources, LoadResourcesError>;
 }
 
 // Re-exports are handled by the `pub use` imports at the top of the file.
@@ -255,9 +241,7 @@ mod tests {
 
     #[test]
     fn trait_is_object_safe() {
-        let _loader: Arc<
-            dyn MultiAgentResourceLoader<ameli_agent::session_manager::InMemoryMetadata>,
-        > = Arc::new(MockResourceLoader);
+        let _loader: Arc<dyn MultiAgentResourceLoader> = Arc::new(MockResourceLoader);
     }
 
     // -- Mock implementation round-trip --
@@ -270,9 +254,7 @@ mod tests {
 
     struct MockResourceLoader;
 
-    impl MultiAgentResourceLoader<ameli_agent::session_manager::InMemoryMetadata>
-        for MockResourceLoader
-    {
+    impl MultiAgentResourceLoader for MockResourceLoader {
         fn create_session(&self, agent_id: &str) -> AsyncResult<String, CreateSessionError> {
             let agent_id = agent_id.to_string();
             Box::pin(async move { Ok(format!("session-{agent_id}")) })
@@ -281,10 +263,7 @@ mod tests {
         fn load_resources(
             &self,
             session_id: &str,
-        ) -> AsyncResult<
-            AgentSessionResources<ameli_agent::session_manager::InMemoryMetadata>,
-            LoadResourcesError,
-        > {
+        ) -> AsyncResult<AgentSessionResources, LoadResourcesError> {
             let session_id = session_id.to_string();
             Box::pin(async move {
                 if session_id == "session-agent-1" {

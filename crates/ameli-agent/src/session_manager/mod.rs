@@ -1,15 +1,15 @@
 //! Session management trait and in-memory implementation.
 //!
-//! This module defines [`SessionManager<M>`] — the single trait that session
+//! This module defines [`SessionManager`] — the single trait that session
 //! backends implement — and provides [`InMemorySessionManager`] as a
 //! reference implementation backed by interior-mutable `HashMap` storage.
 //!
 //! # Architecture
 //!
 //! ```text
-//! SessionMetadata        ← trait for session identity (ID, creation time)
-//! SessionManager<M>      ← trait for session operations
-//! InMemorySessionManager ← reference implementation (tree-based, in-memory)
+//! SessionMetadata          ← concrete struct for session identity (ID, creation time)
+//! SessionManager           ← trait for session operations
+//! InMemorySessionManager   ← reference implementation (tree-based, in-memory)
 //! ```
 //!
 //! # Session Types
@@ -31,7 +31,7 @@ pub mod types;
 
 // Re-export primary types for convenience.
 pub use error::SessionError;
-pub use in_memory::{InMemoryMetadata, InMemorySessionManager};
+pub use in_memory::InMemorySessionManager;
 pub use manager::{AsyncResult, BranchSummaryData, SessionManager, SessionMetadata};
 pub use types::{
     BranchSummaryEntry, CompactionEntry, CustomEntry, CustomMessageEntry, MessageEntry,
