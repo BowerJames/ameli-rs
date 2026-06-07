@@ -567,10 +567,11 @@ impl std::fmt::Debug for ExtensionApi {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```
 /// use ameli_agent::extension::{Extension, ExtensionApi, ExtensionRunner, ExtensionActions, init_extensions};
 /// use ameli_agent::interface::NoopInterface;
 /// use ameli_agent::session_manager::InMemorySessionManager;
+/// use ameli_agent_core::AgentOptions;
 /// use std::sync::Arc;
 ///
 /// struct MyExt;
@@ -578,7 +579,10 @@ impl std::fmt::Debug for ExtensionApi {
 ///     fn init(&self, _api: &Arc<ExtensionApi>) {}
 /// }
 ///
-/// // Assume runner, actions, and agent are already constructed
+/// let agent = ameli_agent_core::agent::Agent::new_arc(AgentOptions::default());
+/// let session_manager = Arc::new(InMemorySessionManager::new());
+/// let runner = Arc::new(ExtensionRunner::empty(Arc::new(NoopInterface)));
+/// let actions = Arc::new(ExtensionActions::new(session_manager, &agent));
 /// let api = Arc::new(ExtensionApi::new(runner, actions));
 /// let extensions: Vec<Box<dyn Extension>> = vec![Box::new(MyExt)];
 /// init_extensions(&api, &extensions);

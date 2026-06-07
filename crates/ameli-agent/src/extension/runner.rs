@@ -306,26 +306,6 @@ impl ExtensionRunner {
         runner
     }
 
-    /// Create a runner by initializing a list of extensions with a custom
-    /// interface.
-    ///
-    /// The provided `agent` is used to construct an [`ExtensionActions`](super::ExtensionActions)
-    /// so that action methods are fully functional from extension handlers and tools.
-    pub fn from_extensions_with_interface(
-        extensions: &[Box<dyn Extension>],
-        interface: Arc<dyn Interface>,
-        agent: &Arc<ameli_agent_core::agent::Agent>,
-    ) -> Arc<Self> {
-        let runner = Arc::new(Self::empty(interface));
-        let actions = Arc::new(super::ExtensionActions::new(
-            Arc::new(crate::session_manager::InMemorySessionManager::new()),
-            agent,
-        ));
-        let api = Arc::new(super::ExtensionApi::new(runner.clone(), actions));
-        crate::extension::init_extensions(&api, extensions);
-        runner
-    }
-
     // -----------------------------------------------------------------------
     // Registration methods (called by ExtensionApi, pub(crate))
     // -----------------------------------------------------------------------
