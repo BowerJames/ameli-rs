@@ -639,22 +639,19 @@ pub async fn create_agent_session(
             provider: model.provider.clone(),
         })?;
 
-    // 3. Initialize extensions.
+    // 3. Create empty ExtensionRunner (no hooks or tools yet).
     let runner = Arc::new(ExtensionRunner::empty(options.interface.clone()));
-    let actions = Arc::new(ExtensionActions::new(options.session_manager.clone()));
-    init_extensions(&options.extensions, &runner, &actions);
 
-    // 4. Build AgentOptions.
+    // 4. Construct ArcAgent — no hooks, no tools yet.
     let thinking_level = options.thinking_level.unwrap_or(ThinkingLevel::Off);
-    let tools = runner.get_registered_tools();
     let auth_storage = options.auth_storage.clone();
 
-    let mut agent_options = AgentOptions {
+    let agent_options = AgentOptions {
         initial_state: Some(AgentState {
             system_prompt: options.system_prompt.unwrap_or_default(),
             model: model.clone(),
             thinking_level,
-            tools,
+            tools: vec![], // set later after extensions register tools
             messages: Vec::new(),
             is_streaming: false,
             streaming_message: None,
@@ -669,17 +666,24 @@ pub async fn create_agent_session(
         api_registry: Some(ameli_ai::api::DEFAULT_API_REGISTRY.clone()),
         ..Default::default()
     };
-
-    // 5. Install extension hooks (before_tool_call, after_tool_call, transform_context).
-    runner.install_hooks(&mut agent_options);
-
-    // 6. Construct ArcAgent.
     let agent = ArcAgent::new(agent_options);
 
-    // 7. Wire ExtensionActions to the agent.
-    actions.set_agent(agent.agent());
+    // 5. Create ExtensionActions — fully wired with Weak<Agent>.
+    let actions = Arc::new(ExtensionActions::new(
+        options.session_manager.clone(),
+        agent.agent(),
+    ));
 
-    // 8. Construct AgentSession.
+    // 6. Initialize extensions (register hooks/tools into runner).
+    init_extensions(&options.extensions, &runner, &actions);
+
+    // 7. Install extension hooks on the agent.
+    runner.install_hooks_on_agent(&agent).await;
+
+    // 8. Set tools from extensions on the agent.
+    agent.set_tools(runner.get_registered_tools()).await;
+
+    // 9. Construct AgentSession (subscribe + emit session_start).
     let session = AgentSession::new(AgentSessionConfig {
         agent,
         session_manager: options.session_manager.clone(),
@@ -689,7 +693,7 @@ pub async fn create_agent_session(
     })
     .await;
 
-    // 8. Restore session context from storage (only if session has existing data).
+    // 10. Restore session context from storage (only if session has existing data).
     let session_ctx = options.session_manager.build_context().await?;
     let has_existing_session = !session_ctx.messages.is_empty();
 
@@ -774,8 +778,10 @@ mod tests {
     async fn test_session(agent: ArcAgent) -> AgentSession {
         let session_manager = Arc::new(InMemorySessionManager::new());
         let runner = Arc::new(ExtensionRunner::empty(Arc::new(NoopInterface)));
-        let actions = Arc::new(ExtensionActions::new(session_manager.clone()));
-        actions.set_agent(agent.agent());
+        let actions = Arc::new(ExtensionActions::new(
+            session_manager.clone(),
+            agent.agent(),
+        ));
         crate::extension::init_extensions(&[Box::new(NoCommandsExtension)], &runner, &actions);
         AgentSession::new(AgentSessionConfig {
             agent,

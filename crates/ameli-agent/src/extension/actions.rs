@@ -13,6 +13,16 @@
 //!     └── Arc<ExtensionActions>   ← this struct (Weak<Agent> + session manager)
 //! ```
 //!
+//! # Construction
+//!
+//! Two constructors are provided:
+//!
+//! - [`new`](ExtensionActions::new) — fully wired with a live agent reference.
+//!   Message injection works immediately. Used by [`create_agent_session`].
+//! - [`no_op`](ExtensionActions::no_op) — no agent reference. Message
+//!   injection silently does nothing. Used by
+//!   [`ExtensionRunner::from_extensions`] and similar ephemeral contexts.
+//!
 //! # Why `Weak<Agent>`
 //!
 //! Extensions capture `Arc<ExtensionApi>` in their handlers, which are stored
@@ -39,13 +49,17 @@ use std::sync::{Arc, Weak};
 
 /// Runtime action performer for extensions.
 ///
-/// Holds a [`Weak<Agent>] for message injection and an
-/// [`Arc<dyn SessionManager>`] for session persistence. The weak reference is
-/// set after the agent is constructed (via [`set_agent`](Self::set_agent)),
-/// and safely degrades when the session is torn down.
+/// Holds a [`Weak<Agent>`] for message injection and an
+/// [`Arc<dyn SessionManager>`] for session persistence. The weak reference
+/// safely degrades when the session is torn down.
+///
+/// Construct with [`new`](Self::new) for a fully wired instance, or
+/// [`no_op`](Self::no_op) for an ephemeral instance where message injection
+/// silently does nothing.
 pub struct ExtensionActions {
     /// Weak reference to the agent — avoids reference cycles.
-    agent: parking_lot::RwLock<Option<Weak<ameli_agent_core::agent::Agent>>>,
+    /// `None` in `no_op` mode (ephemeral contexts).
+    agent: Option<Weak<ameli_agent_core::agent::Agent>>,
     /// Session storage backend for entry persistence.
     session_manager: Arc<dyn SessionManager>,
 }
@@ -55,29 +69,34 @@ impl ExtensionActions {
     // Construction
     // -----------------------------------------------------------------------
 
-    /// Create empty actions with no agent reference.
+    /// Create fully-wired actions with a live agent reference.
     ///
-    /// Call [`set_agent`](Self::set_agent) after constructing the agent to
-    /// wire up message injection.
-    pub fn new(session_manager: Arc<dyn SessionManager>) -> Self {
+    /// Message injection methods (`send_user_message`, `send_custom_message`)
+    /// work immediately. The agent reference is stored as [`Weak`] so no
+    /// reference cycle is created.
+    pub fn new(
+        session_manager: Arc<dyn SessionManager>,
+        agent: &Arc<ameli_agent_core::agent::Agent>,
+    ) -> Self {
         Self {
-            agent: parking_lot::RwLock::new(None),
+            agent: Some(Arc::downgrade(agent)),
             session_manager,
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Agent wiring
-    // -----------------------------------------------------------------------
-
-    /// Set (or replace) the agent reference.
+    /// Create no-op actions without an agent reference.
     ///
-    /// Stores a [`Weak`] derived from the given `Arc<Agent>`. Call this after
-    /// constructing the agent, before any extensions might try to send
-    /// messages.
-    pub fn set_agent(&self, agent: &Arc<ameli_agent_core::agent::Agent>) {
-        let mut guard = self.agent.write();
-        *guard = Some(Arc::downgrade(agent));
+    /// Message injection methods silently do nothing. For use in ephemeral
+    /// contexts (e.g., [`ExtensionRunner::from_extensions`]) where actions
+    /// only need to satisfy the [`ExtensionApi`](super::ExtensionApi)
+    /// constructor but no agent is available yet.
+    ///
+    /// Session persistence methods (`append_custom_entry`) still work.
+    pub fn no_op(session_manager: Arc<dyn SessionManager>) -> Self {
+        Self {
+            agent: None,
+            session_manager,
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -95,7 +114,8 @@ impl ExtensionActions {
     /// - [`MessageMode::FollowUp`]: injected after the agent would otherwise
     ///   stop, potentially triggering a new round of processing.
     ///
-    /// Silently does nothing if the agent has been dropped (session torn down).
+    /// Silently does nothing if the agent has been dropped (session torn down)
+    /// or if this is a [`no_op`](Self::no_op) instance.
     pub async fn send_user_message(&self, content: UserContent, mode: MessageMode) {
         let message = UserMessage {
             content,
@@ -114,7 +134,8 @@ impl ExtensionActions {
     /// Custom messages are converted to LLM-compatible messages by registered
     /// custom message formatters during the `convert_to_llm` pipeline.
     ///
-    /// Silently does nothing if the agent has been dropped (session torn down).
+    /// Silently does nothing if the agent has been dropped (session torn down)
+    /// or if this is a [`no_op`](Self::no_op) instance.
     pub async fn send_custom_message(
         &self,
         custom_type: &str,
@@ -162,17 +183,15 @@ impl ExtensionActions {
     /// Enqueue a message on the appropriate agent queue.
     ///
     /// Upgrades the `Weak<Agent>` and calls `steer()` or `follow_up()`
-    /// depending on mode. Silently does nothing if the agent has been dropped.
+    /// depending on mode. Silently does nothing if the agent has been dropped
+    /// or this is a no-op instance.
     async fn enqueue_message(&self, msg: AgentMessage, mode: MessageMode) {
-        let agent = {
-            let guard = self.agent.read();
-            match guard.as_ref() {
-                Some(weak) => match weak.upgrade() {
-                    Some(arc) => arc,
-                    None => return, // Agent dropped — silently do nothing
-                },
-                None => return, // No agent set yet — silently do nothing
-            }
+        let agent = match &self.agent {
+            Some(weak) => match weak.upgrade() {
+                Some(arc) => arc,
+                None => return, // Agent dropped — silently do nothing
+            },
+            None => return, // no_op instance — silently do nothing
         };
 
         match mode {
@@ -249,8 +268,7 @@ mod tests {
     #[tokio::test]
     async fn send_user_message_steer() {
         let agent = test_agent();
-        let actions = ExtensionActions::new(test_session_manager());
-        actions.set_agent(&agent);
+        let actions = ExtensionActions::new(test_session_manager(), &agent);
 
         actions
             .send_user_message(
@@ -265,8 +283,7 @@ mod tests {
     #[tokio::test]
     async fn send_user_message_follow_up() {
         let agent = test_agent();
-        let actions = ExtensionActions::new(test_session_manager());
-        actions.set_agent(&agent);
+        let actions = ExtensionActions::new(test_session_manager(), &agent);
 
         actions
             .send_user_message(
@@ -279,10 +296,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_user_message_silent_noop_when_agent_dropped() {
-        let actions = ExtensionActions::new(test_session_manager());
+    async fn send_user_message_silent_noop_for_no_op() {
+        let actions = ExtensionActions::no_op(test_session_manager());
 
-        // No agent set — should silently do nothing
+        // no_op — should silently do nothing
         actions
             .send_user_message(
                 ameli_ai::types::UserContent::Text("no agent".into()),
@@ -295,8 +312,7 @@ mod tests {
     #[tokio::test]
     async fn send_user_message_silent_noop_when_weak_dropped() {
         let agent = test_agent();
-        let actions = ExtensionActions::new(test_session_manager());
-        actions.set_agent(&agent);
+        let actions = ExtensionActions::new(test_session_manager(), &agent);
 
         // Drop the agent
         drop(agent);
@@ -315,8 +331,7 @@ mod tests {
     #[tokio::test]
     async fn send_custom_message_steer() {
         let agent = test_agent();
-        let actions = ExtensionActions::new(test_session_manager());
-        actions.set_agent(&agent);
+        let actions = ExtensionActions::new(test_session_manager(), &agent);
 
         actions
             .send_custom_message(
@@ -334,8 +349,7 @@ mod tests {
     #[tokio::test]
     async fn send_custom_message_follow_up() {
         let agent = test_agent();
-        let actions = ExtensionActions::new(test_session_manager());
-        actions.set_agent(&agent);
+        let actions = ExtensionActions::new(test_session_manager(), &agent);
 
         actions
             .send_custom_message(
@@ -351,8 +365,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_custom_message_silent_noop_when_no_agent() {
-        let actions = ExtensionActions::new(test_session_manager());
+    async fn send_custom_message_silent_noop_for_no_op() {
+        let actions = ExtensionActions::no_op(test_session_manager());
 
         actions
             .send_custom_message("type", None, true, None, MessageMode::Steer)
@@ -365,7 +379,8 @@ mod tests {
     #[tokio::test]
     async fn append_custom_entry_delegates_to_session_manager() {
         let sm = test_session_manager();
-        let actions = ExtensionActions::new(sm.clone());
+        let agent = test_agent();
+        let actions = ExtensionActions::new(sm.clone(), &agent);
 
         let entry_id = actions
             .append_custom_entry("my_type", Some(serde_json::json!({"key": "value"})))
@@ -388,7 +403,8 @@ mod tests {
     #[tokio::test]
     async fn append_custom_entry_with_none_data() {
         let sm = test_session_manager();
-        let actions = ExtensionActions::new(sm.clone());
+        let agent = test_agent();
+        let actions = ExtensionActions::new(sm.clone(), &agent);
 
         let entry_id = actions.append_custom_entry("simple", None).await.unwrap();
         assert!(!entry_id.is_empty());
@@ -404,27 +420,29 @@ mod tests {
         }
     }
 
-    // -- set_agent tests --
+    // -- no_op tests --
 
     #[tokio::test]
-    async fn set_agent_can_be_called_multiple_times() {
-        let agent1 = test_agent();
-        let agent2 = test_agent();
-        let actions = ExtensionActions::new(test_session_manager());
+    async fn no_op_append_custom_entry_still_works() {
+        let sm = test_session_manager();
+        let actions = ExtensionActions::no_op(sm.clone());
 
-        actions.set_agent(&agent1);
-        actions.set_agent(&agent2);
+        let entry_id = actions.append_custom_entry("type", None).await.unwrap();
+        assert!(!entry_id.is_empty());
 
-        // Send to agent2 (last set_agent wins)
+        let entries = sm.entries().await.unwrap();
+        assert_eq!(entries.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn no_op_send_user_message_does_nothing() {
+        let actions = ExtensionActions::no_op(test_session_manager());
         actions
             .send_user_message(
-                ameli_ai::types::UserContent::Text("test".into()),
+                ameli_ai::types::UserContent::Text("nothing happens".into()),
                 MessageMode::Steer,
             )
             .await;
-
-        assert!(agent2.has_queued_messages().await);
-        // agent1 should NOT have queued messages
-        assert!(!agent1.has_queued_messages().await);
+        // No panic, no agent to check = success
     }
 }

@@ -26,9 +26,7 @@
 //!    Extensions call registration methods to subscribe to events, register
 //!    tools, and register commands. They may also call action methods like
 //!    [`ExtensionApi::send_user_message`] from handlers and tools.
-//! 4. After constructing the agent, call
-//!    [`ExtensionActions::set_agent`] to wire the weak reference.
-//! 5. The [`ExtensionRunner`] wires the accumulated handlers into the agent loop.
+//! 4. The [`ExtensionRunner`] wires the accumulated handlers into the agent loop.
 //!
 //! # Events
 //!
@@ -580,7 +578,7 @@ impl std::fmt::Debug for ExtensionApi {
 ///
 /// let session_manager = Arc::new(InMemorySessionManager::new());
 /// let runner = Arc::new(ExtensionRunner::empty(Arc::new(NoopInterface)));
-/// let actions = Arc::new(ExtensionActions::new(session_manager));
+/// let actions = Arc::new(ExtensionActions::no_op(session_manager));
 /// let extensions: Vec<Box<dyn Extension>> = vec![Box::new(MyExt)];
 /// init_extensions(&extensions, &runner, &actions);
 /// ```
@@ -740,7 +738,7 @@ mod tests {
     }
 
     fn test_actions() -> Arc<ExtensionActions> {
-        Arc::new(ExtensionActions::new(test_session_manager()))
+        Arc::new(ExtensionActions::no_op(test_session_manager()))
     }
 
     #[test]
@@ -905,7 +903,7 @@ mod tests {
     async fn append_custom_entry_via_api() {
         let sm = test_session_manager();
         let runner = Arc::new(ExtensionRunner::empty(noop_interface()));
-        let actions = Arc::new(ExtensionActions::new(sm.clone()));
+        let actions = Arc::new(ExtensionActions::no_op(sm.clone()));
         let api = Arc::new(ExtensionApi::new(runner.clone(), actions));
 
         let entry_id = api
@@ -926,7 +924,7 @@ mod tests {
 
         let sm = test_session_manager();
         let runner = Arc::new(ExtensionRunner::empty(noop_interface()));
-        let actions = Arc::new(ExtensionActions::new(sm.clone()));
+        let actions = Arc::new(ExtensionActions::no_op(sm.clone()));
         let api = Arc::new(ExtensionApi::new(runner.clone(), actions));
 
         let entry_count = Arc::new(AtomicUsize::new(0));

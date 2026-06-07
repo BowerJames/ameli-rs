@@ -49,17 +49,17 @@ type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 // ---------------------------------------------------------------------------
 
 pub type ConvertToLlmFn = dyn Fn(&[AgentMessage]) -> BoxFuture<Vec<Message>> + Send + Sync;
-type TransformContextFn = dyn Fn(&[AgentMessage], Option<CancellationToken>) -> BoxFuture<Vec<AgentMessage>>
+pub type TransformContextFn = dyn Fn(&[AgentMessage], Option<CancellationToken>) -> BoxFuture<Vec<AgentMessage>>
     + Send
     + Sync;
-type GetApiKeyFn = dyn Fn(&str) -> BoxFuture<Option<String>> + Send + Sync;
-type BeforeToolCallFn = dyn Fn(&BeforeToolCallContext, Option<CancellationToken>) -> BoxFuture<Option<BeforeToolCallResult>>
+pub type GetApiKeyFn = dyn Fn(&str) -> BoxFuture<Option<String>> + Send + Sync;
+pub type BeforeToolCallFn = dyn Fn(&BeforeToolCallContext, Option<CancellationToken>) -> BoxFuture<Option<BeforeToolCallResult>>
     + Send
     + Sync;
-type AfterToolCallFn = dyn Fn(&AfterToolCallContext, Option<CancellationToken>) -> BoxFuture<Option<AfterToolCallResult>>
+pub type AfterToolCallFn = dyn Fn(&AfterToolCallContext, Option<CancellationToken>) -> BoxFuture<Option<AfterToolCallResult>>
     + Send
     + Sync;
-type PrepareNextTurnFn =
+pub type PrepareNextTurnFn =
     dyn Fn(Option<CancellationToken>) -> BoxFuture<Option<AgentLoopTurnUpdate>> + Send + Sync;
 
 // ---------------------------------------------------------------------------
@@ -172,6 +172,29 @@ struct ActiveRun {
 pub type SubscriberFn = dyn Fn(AgentEvent, CancellationToken) -> BoxFuture<()> + Send + Sync;
 
 // ---------------------------------------------------------------------------
+// ExtensionHooks — extension-provided hooks installed post-construction
+// ---------------------------------------------------------------------------
+
+/// Extension-provided hooks that can be installed on an [`Agent`] after construction.
+///
+/// This struct is built by the [`ExtensionRunner`](ameli_agent::extension::ExtensionRunner)
+/// and installed on the agent via [`Agent::install_extension_hooks`]. Only fields
+/// that are `Some` overwrite the agent's current value.
+#[derive(Default)]
+pub struct ExtensionHooks {
+    /// Called before a tool is executed. If it returns a blocking result,
+    /// the tool call is prevented.
+    pub before_tool_call: Option<Arc<BeforeToolCallFn>>,
+    /// Called after a tool finishes executing. Can override parts of the result.
+    pub after_tool_call: Option<Arc<AfterToolCallFn>>,
+    /// Optional transform applied to the context before `convert_to_llm`.
+    pub transform_context: Option<Arc<TransformContextFn>>,
+    /// Converts `AgentMessage[]` to LLM-compatible `Message[]` before each
+    /// LLM call.
+    pub convert_to_llm: Option<Arc<ConvertToLlmFn>>,
+}
+
+// ---------------------------------------------------------------------------
 // AgentInner — all mutable state behind a single Mutex
 // ---------------------------------------------------------------------------
 
@@ -183,6 +206,12 @@ struct AgentInner {
     thinking_level: ThinkingLevel,
     tools: Vec<Arc<dyn AgentTool>>,
     messages: Vec<AgentMessage>,
+
+    // --- Extension hooks (settable post-construction) ---
+    convert_to_llm: Arc<ConvertToLlmFn>,
+    transform_context: Option<Arc<TransformContextFn>>,
+    before_tool_call: Option<Arc<BeforeToolCallFn>>,
+    after_tool_call: Option<Arc<AfterToolCallFn>>,
 
     // --- Runtime state ---
     is_streaming: bool,
@@ -363,11 +392,7 @@ pub struct Agent {
     inner: Mutex<AgentInner>,
 
     // Immutable config captured at construction time.
-    convert_to_llm: Arc<ConvertToLlmFn>,
-    transform_context: Option<Arc<TransformContextFn>>,
     get_api_key: Option<Arc<GetApiKeyFn>>,
-    before_tool_call: Option<Arc<BeforeToolCallFn>>,
-    after_tool_call: Option<Arc<AfterToolCallFn>>,
     prepare_next_turn: Option<Arc<PrepareNextTurnFn>>,
     session_id: Option<String>,
     thinking_budgets: Option<ThinkingBudgets>,
@@ -398,6 +423,12 @@ impl Agent {
             thinking_level: state.thinking_level,
             tools: state.tools,
             messages: state.messages,
+            convert_to_llm: options
+                .convert_to_llm
+                .unwrap_or_else(|| Arc::new(|msgs| default_convert_to_llm(msgs))),
+            transform_context: options.transform_context,
+            before_tool_call: options.before_tool_call,
+            after_tool_call: options.after_tool_call,
             is_streaming: false,
             streaming_message: None,
             pending_tool_calls: HashSet::new(),
@@ -414,13 +445,7 @@ impl Agent {
 
         Self {
             inner: Mutex::new(inner),
-            convert_to_llm: options
-                .convert_to_llm
-                .unwrap_or_else(|| Arc::new(|msgs| default_convert_to_llm(msgs))),
-            transform_context: options.transform_context,
             get_api_key: options.get_api_key,
-            before_tool_call: options.before_tool_call,
-            after_tool_call: options.after_tool_call,
             prepare_next_turn: options.prepare_next_turn,
             session_id: options.session_id,
             thinking_budgets: options.thinking_budgets,
@@ -589,6 +614,45 @@ impl Agent {
         inner.thinking_level = level;
     }
 
+    /// Install extension-provided hooks.
+    ///
+    /// Only overwrites fields that are `Some`. Fields left `None` retain
+    /// their current value (default or previously installed hook).
+    ///
+    /// Must be called before the first [`prompt`](ArcAgent::prompt) call.
+    pub async fn install_extension_hooks(&self, hooks: ExtensionHooks) {
+        let mut inner = self.inner.lock().await;
+        if let Some(h) = hooks.before_tool_call {
+            inner.before_tool_call = Some(h);
+        }
+        if let Some(h) = hooks.after_tool_call {
+            inner.after_tool_call = Some(h);
+        }
+        if let Some(h) = hooks.transform_context {
+            inner.transform_context = Some(h);
+        }
+        if let Some(h) = hooks.convert_to_llm {
+            inner.convert_to_llm = h;
+        }
+    }
+
+    /// Get the current `convert_to_llm` function.
+    ///
+    /// Used by [`ExtensionRunner::install_hooks_on_agent`] to wrap the
+    /// current conversion function with custom message formatting.
+    async fn convert_to_llm(&self) -> Arc<ConvertToLlmFn> {
+        let inner = self.inner.lock().await;
+        inner.convert_to_llm.clone()
+    }
+
+    /// Set the available tools.
+    ///
+    /// Must be called before the first [`prompt`](ArcAgent::prompt) call.
+    pub async fn set_tools(&self, tools: Vec<Arc<dyn AgentTool>>) {
+        let mut inner = self.inner.lock().await;
+        inner.tools = tools;
+    }
+
     // -----------------------------------------------------------------------
     // Private: context/config builders
     // -----------------------------------------------------------------------
@@ -721,9 +785,23 @@ async fn build_loop_config(
     agent: &Arc<Agent>,
     skip_initial_steering_poll: bool,
 ) -> AgentLoopConfig {
-    let (model, thinking_level) = {
+    let (
+        model,
+        thinking_level,
+        convert_to_llm,
+        transform_context,
+        before_tool_call,
+        after_tool_call,
+    ) = {
         let inner = agent.inner.lock().await;
-        (inner.model.clone(), inner.thinking_level)
+        (
+            inner.model.clone(),
+            inner.thinking_level,
+            inner.convert_to_llm.clone(),
+            inner.transform_context.clone(),
+            inner.before_tool_call.clone(),
+            inner.after_tool_call.clone(),
+        )
     };
 
     let reasoning = match thinking_level {
@@ -735,11 +813,7 @@ async fn build_loop_config(
         ThinkingLevel::XHigh => Some(ameli_ai::types::ThinkingLevel::XHigh),
     };
 
-    let convert_to_llm = agent.convert_to_llm.clone();
-    let transform_context = agent.transform_context.clone();
     let get_api_key = agent.get_api_key.clone();
-    let before_tool_call = agent.before_tool_call.clone();
-    let after_tool_call = agent.after_tool_call.clone();
     let prepare_next_turn_fn = agent.prepare_next_turn.clone();
 
     // Steering closure: drains the agent's steering queue
@@ -953,6 +1027,26 @@ impl ArcAgent {
     /// Must only be called when the agent is idle (no active run).
     pub async fn set_thinking_level(&self, level: ThinkingLevel) {
         self.inner.set_thinking_level(level).await
+    }
+
+    /// Install extension-provided hooks.
+    ///
+    /// Only overwrites fields that are `Some`. Must be called before the
+    /// first [`prompt`](Self::prompt) call.
+    pub async fn install_extension_hooks(&self, hooks: ExtensionHooks) {
+        self.inner.install_extension_hooks(hooks).await
+    }
+
+    /// Set the available tools.
+    ///
+    /// Must be called before the first [`prompt`](Self::prompt) call.
+    pub async fn set_tools(&self, tools: Vec<Arc<dyn AgentTool>>) {
+        self.inner.set_tools(tools).await
+    }
+
+    /// Get the current `convert_to_llm` function.
+    pub async fn convert_to_llm(&self) -> Arc<ConvertToLlmFn> {
+        self.inner.convert_to_llm().await
     }
 
     // -----------------------------------------------------------------------

@@ -3,5 +3,5 @@ pub mod agent_loop;
 pub mod types;
 
 // Re-export the primary agent types for convenience.
-pub use agent::{AgentOptions, ArcAgent, PromptInput, Subscription};
+pub use agent::{AgentOptions, ArcAgent, ExtensionHooks, PromptInput, Subscription};
 pub use types::CustomMessage;

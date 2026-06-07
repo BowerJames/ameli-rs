@@ -12,8 +12,24 @@
 //!     ├── SessionManager      ← session persistence trait (session_manager module)
 //!     ├── AuthStorage         ← API key resolution (auth_storage module)
 //!     ├── ExtensionRunner     ← extension event dispatch
+//!     ├── ExtensionActions    ← extension runtime actions (Weak<Agent>)
 //!     └── Interface           ← minimal UI abstraction
 //! ```
+//!
+//! # Construction
+//!
+//! [`create_agent_session`] is the primary entry point. The construction
+//! order is designed so that every structure is fully built at creation:
+//!
+//! 1. Resolve model + validate API key
+//! 2. Create empty `ExtensionRunner`
+//! 3. Construct `ArcAgent` (no hooks or tools yet)
+//! 4. Construct `ExtensionActions` with `Weak<Agent>` (fully wired)
+//! 5. Initialize extensions (register hooks/tools into runner)
+//! 6. Install extension hooks on the agent
+//! 7. Set tools from extensions on the agent
+//! 8. Create `AgentSession` (subscribe + emit session_start)
+//! 9. Restore/init session context
 //!
 //! # Session Management
 //!
