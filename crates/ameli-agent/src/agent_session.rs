@@ -631,7 +631,10 @@ pub async fn create_agent_session(
         })?;
 
     // 3. Initialize extensions.
-    let runner = Arc::new(ExtensionRunner::empty(options.interface.clone()));
+    let runner = Arc::new(ExtensionRunner::empty(
+        options.interface.clone(),
+        options.session_manager.clone(),
+    ));
     init_extensions(&options.extensions, &runner);
 
     // 4. Build AgentOptions.
@@ -759,7 +762,10 @@ mod tests {
 
     async fn test_session(agent: ArcAgent) -> AgentSession {
         let session_manager = Arc::new(InMemorySessionManager::new());
-        let runner = ExtensionRunner::from_extensions(&[Box::new(NoCommandsExtension)]);
+        let runner = ExtensionRunner::from_extensions(
+            &[Box::new(NoCommandsExtension)],
+            session_manager.clone(),
+        );
         AgentSession::new(AgentSessionConfig {
             agent,
             session_manager,
@@ -1028,7 +1034,7 @@ mod tests {
     #[tokio::test]
     async fn handle_agent_event_persists_message_end() {
         let sm: Arc<dyn SessionManager> = Arc::new(InMemorySessionManager::new());
-        let runner = ExtensionRunner::from_extensions(&[]);
+        let runner = ExtensionRunner::from_extensions(&[], sm.clone());
 
         let event = AgentEvent::MessageEnd {
             message: AgentMessage::User(ameli_ai::types::UserMessage::text("hello")),
