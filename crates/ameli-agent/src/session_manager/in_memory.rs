@@ -21,40 +21,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 // ---------------------------------------------------------------------------
-// InMemoryMetadata
-// ---------------------------------------------------------------------------
-
-/// Metadata for [`InMemorySessionManager`].
-///
-/// Auto-generated with a unique ID and creation timestamp when using
-/// [`InMemorySessionManager::new()`].
-#[derive(Debug, Clone)]
-pub struct InMemoryMetadata {
-    id: String,
-    created_at: String,
-}
-
-impl InMemoryMetadata {
-    /// Create metadata with explicit values.
-    pub fn new(id: impl Into<String>, created_at: impl Into<String>) -> Self {
-        Self {
-            id: id.into(),
-            created_at: created_at.into(),
-        }
-    }
-}
-
-impl SessionMetadata for InMemoryMetadata {
-    fn id(&self) -> &str {
-        &self.id
-    }
-
-    fn created_at(&self) -> &str {
-        &self.created_at
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Internal state
 // ---------------------------------------------------------------------------
 
@@ -138,7 +104,7 @@ impl State {
 /// # }
 /// ```
 pub struct InMemorySessionManager {
-    metadata: InMemoryMetadata,
+    metadata: SessionMetadata,
     state: Arc<RwLock<State>>,
 }
 
@@ -155,13 +121,13 @@ impl InMemorySessionManager {
             COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         );
         Self {
-            metadata: InMemoryMetadata::new(id, created_at),
+            metadata: SessionMetadata { id, created_at },
             state: Arc::new(RwLock::new(State::new())),
         }
     }
 
     /// Create a new empty session with custom metadata.
-    pub fn with_metadata(metadata: InMemoryMetadata) -> Self {
+    pub fn with_metadata(metadata: SessionMetadata) -> Self {
         Self {
             metadata,
             state: Arc::new(RwLock::new(State::new())),
@@ -175,8 +141,8 @@ impl Default for InMemorySessionManager {
     }
 }
 
-impl SessionManager<InMemoryMetadata> for InMemorySessionManager {
-    fn metadata(&self) -> AsyncResult<InMemoryMetadata> {
+impl SessionManager for InMemorySessionManager {
+    fn metadata(&self) -> AsyncResult<SessionMetadata> {
         let metadata = self.metadata.clone();
         Box::pin(async move { Ok(metadata) })
     }
@@ -535,19 +501,19 @@ mod tests {
     async fn metadata_auto_generated() {
         let sm = InMemorySessionManager::new();
         let meta = sm.metadata().await.unwrap();
-        assert!(meta.id().starts_with("session-"));
-        assert!(!meta.created_at().is_empty());
+        assert!(meta.id.starts_with("session-"));
+        assert!(!meta.created_at.is_empty());
     }
 
     #[tokio::test]
     async fn metadata_custom() {
-        let sm = InMemorySessionManager::with_metadata(InMemoryMetadata::new(
-            "custom-id",
-            "2026-01-01T00:00:00Z",
-        ));
+        let sm = InMemorySessionManager::with_metadata(SessionMetadata {
+            id: "custom-id".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+        });
         let meta = sm.metadata().await.unwrap();
-        assert_eq!(meta.id(), "custom-id");
-        assert_eq!(meta.created_at(), "2026-01-01T00:00:00Z");
+        assert_eq!(meta.id, "custom-id");
+        assert_eq!(meta.created_at, "2026-01-01T00:00:00Z");
     }
 
     // -- Append + lookup --
@@ -785,7 +751,7 @@ mod tests {
 
     #[tokio::test]
     async fn trait_object_works() {
-        let sm: Arc<dyn SessionManager<InMemoryMetadata>> = Arc::new(InMemorySessionManager::new());
+        let sm: Arc<dyn SessionManager> = Arc::new(InMemorySessionManager::new());
         sm.append_message(test_user_message("hello")).await.unwrap();
         let ctx = sm.build_context().await.unwrap();
         assert_eq!(ctx.messages.len(), 1);

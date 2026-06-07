@@ -1,6 +1,6 @@
 //! Session manager trait and shared context-building helpers.
 //!
-//! Defines [`SessionManager<M>`] — the single trait that session backends
+//! Defines [`SessionManager`] — the single trait that session backends
 //! implement. Each implementation decides its own ID generation,
 //! persistence strategy, and internal data structures.
 //!
@@ -16,6 +16,7 @@
 use super::error::SessionError;
 use super::types::{SessionContext, SessionEntry};
 use ameli_agent_core::types::AgentMessage;
+use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::pin::Pin;
 
@@ -26,7 +27,7 @@ use std::pin::Pin;
 /// Boxed, sendable async result used by [`SessionManager`] trait methods.
 ///
 /// Using `Pin<Box<dyn Future>>` ensures the trait is dyn-compatible
-/// (object-safe), so `Arc<dyn SessionManager<M>>` works.
+/// (object-safe), so `Arc<dyn SessionManager>` works.
 pub type AsyncResult<T> = Pin<Box<dyn Future<Output = Result<T, SessionError>> + Send>>;
 
 // ---------------------------------------------------------------------------
@@ -35,32 +36,27 @@ pub type AsyncResult<T> = Pin<Box<dyn Future<Output = Result<T, SessionError>> +
 
 /// Metadata identifying and describing a session.
 ///
-/// Different storage backends carry different metadata — for example,
-/// a file-backed session includes the file path and working directory,
-/// while an in-memory session only needs an ID and creation timestamp.
-/// This trait captures the common denominator.
+/// Carries the session ID and creation timestamp. All session backends
+/// share this common metadata; backend-specific fields live on the
+/// concrete `SessionManager` implementation as inherent methods.
 ///
 /// # Examples
 ///
 /// ```
 /// use ameli_agent::session_manager::SessionMetadata;
 ///
-/// struct InMemoryMetadata {
-///     id: String,
-///     created_at: String,
-/// }
-///
-/// impl SessionMetadata for InMemoryMetadata {
-///     fn id(&self) -> &str { &self.id }
-///     fn created_at(&self) -> &str { &self.created_at }
-/// }
+/// let meta = SessionMetadata {
+///     id: "session-1".to_string(),
+///     created_at: "2026-01-01T00:00:00Z".to_string(),
+/// };
+/// assert_eq!(meta.id, "session-1");
 /// ```
-pub trait SessionMetadata: Send + Sync + 'static {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionMetadata {
     /// Unique session identifier.
-    fn id(&self) -> &str;
-
+    pub id: String,
     /// ISO 8601 timestamp of when the session was created.
-    fn created_at(&self) -> &str;
+    pub created_at: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -85,18 +81,13 @@ pub trait SessionMetadata: Send + Sync + 'static {
 /// Implementations must be `Send + Sync` so that the session can be shared
 /// across async tasks. Interior mutability ensures concurrent reads are
 /// not blocked by each other.
-///
-/// # Type Parameter
-///
-/// `M` is the metadata type for this session. Different backends carry
-/// different metadata — see [`SessionMetadata`].
-pub trait SessionManager<M: SessionMetadata>: Send + Sync {
+pub trait SessionManager: Send + Sync {
     // -----------------------------------------------------------------------
     // Read operations
     // -----------------------------------------------------------------------
 
     /// Returns the session metadata.
-    fn metadata(&self) -> AsyncResult<M>;
+    fn metadata(&self) -> AsyncResult<SessionMetadata>;
 
     /// Returns the current leaf entry ID, or `None` if the session is empty.
     fn leaf_id(&self) -> AsyncResult<Option<String>>;
